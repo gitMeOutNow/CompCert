@@ -1470,6 +1470,22 @@ Module EMap(X: EQUALITY_TYPE) <: MAP.
   Proof.
     intros. unfold get, map. reflexivity.
   Qed.
+  Axiom functional_extensionality : forall {X Y: Type} {f g : X -> Y},
+  (forall (x:X), f x = g x) -> f = g.
+
+(* conditional set commutativity*)
+Theorem gscsc :
+  forall (A : Type) (m : t A) (x y : elt) (v1 v2 : A),
+  x <> y ->
+  set x v1 (set y v2 m) = set y v2 (set x v1 m).
+Proof.
+  intros A m x y v1 v2 Hneq.
+  apply functional_extensionality.
+  intros z.              
+  unfold set.
+  destruct (X.eq z x) as [Hzx|Hzx].
+  destruct (X.eq z y) as [Hzy|Hzy]. rewrite -> Hzx in Hzy. contradiction. reflexivity. reflexivity. 
+Qed.
 End EMap.
 
 (** * A partial implementation of trees over any type that injects into type [positive] *)

@@ -73,7 +73,7 @@ Inductive preg: Type :=
   | FR: freg -> preg   (**r double- or single-precision float registers *)
   | CR: crbit -> preg  (**r bits in the condition register *)
   | SP: preg           (**r register X31 used as stack pointer *)
-  | PC: preg.          (**r program counter *)
+  | PC: preg.        (**r program counter *)
 
 Coercion IR: ireg >-> preg.
 Coercion FR: freg >-> preg.
@@ -90,7 +90,10 @@ End PregEq.
 Module Pregmap := EMap(PregEq).
 
 Definition preg_of_iregsp (r: iregsp) : preg :=
-  match r with RR1 r => IR r | XSP => SP end.
+  match r with 
+  | RR1 r => IR r 
+  | XSP => SP 
+  end.
 
 Coercion preg_of_iregsp: iregsp >-> preg.
 
@@ -305,6 +308,7 @@ Inductive instruction: Type :=
   | Pnop                                                              (**r no operation *)
   | Pcfi_adjust (ofs: int)                                            (**r .cfi_adjust debug directive *)
   | Pcfi_rel_offset (ofs: int)                                        (**r .cfi_rel_offset debug directive *)
+  | Pincpc (** my own thing, represents incrementing PC*)
 .
 
 Definition code := list instruction.
@@ -436,8 +440,8 @@ Inductive outcome: Type :=
 (** Manipulations over the [PC] register: continuing with the next
   instruction ([nextinstr]) or branching to a label ([goto_label]). *)
 
-Definition nextinstr (rs: regset) :=
-  rs#PC <- (Val.offset_ptr rs#PC Ptrofs.one).
+Definition nextinstr (rs: regset) := rs.
+  (* rs#PC <- (Val.offset_ptr rs#PC Ptrofs.one). *)
 
 Definition goto_label (f: function) (lbl: label) (rs: regset) (m: mem) :=
   match label_pos lbl 0 (fn_code f) with
@@ -791,7 +795,7 @@ Definition exec_instr (f: function) (i: instruction) (rs: regset) (m: mem) : out
       Next (nextinstr (compare_long rs rs#r1 (Vlong (Int64.neg (Int64.repr n))) m)) m
   (** Move integer register *)
   | Pmov rd r1 =>
-      Next (nextinstr (rs#rd <- (rs#r1))) m
+      Next ( nextinstr (rs#rd <- (rs#r1))) m
   (** Logical, immediate *)
   | Pandimm W rd r1 n =>
       Next (nextinstr (rs#rd <- (Val.and rs##r1 (Vint (Int.repr n))))) m
@@ -1122,6 +1126,7 @@ Definition exec_instr (f: function) (i: instruction) (rs: regset) (m: mem) : out
   | Pfmax _ _ _ _
   | Pfmin _ _ _ _
   | Pnop
+  | Pincpc => Next (nextinstr rs) m
   | Pcfi_adjust _ =>
       Stuck
   end.
@@ -1318,3 +1323,492 @@ Definition data_preg (r: preg) : bool :=
   | SP => true
   | PC => false
   end.
+
+Lemma vptr_equality: forall b1 b2 o1 o2, b1=b2 /\ o1 = o2 -> Vptr b1 o1 = Vptr b2 o2.
+Proof. intros. destruct H. rewrite H. rewrite H0. reflexivity. Qed.
+
+Lemma inverse_vptr_equality: forall b1 b2 o1 o2,  Vptr b1 o1 = Vptr b2 o2 -> b1=b2 /\ o1 = o2.
+Proof. intros. inversion H. split; reflexivity. Qed.
+
+(* (* 
+(Val.offset_ptr (rs_i # rd0 <- (rs_i r0) PC) Ptrofs.one) *)
+Lemma invertible_increment: forall m_i1 m_i2 m_t1 m_t2 key delta b1 o1 b2 o2, Pregmap.get key m_i1 = Vptr b1 o1 -> Pregmap.get key m_i2 = Vptr b2 o2 -> m_t1 = Pregmap.set key (Val.offset_ptr (Pregmap.get key m_i1) delta) m_i1 -> m_t2 = Pregmap.set key (Val.offset_ptr (Pregmap.get key m_i2) delta) m_i2 -> Pregmap.get key m_t2 = Pregmap.get key m_t1 -> Pregmap.get key m_i1 = Pregmap.get key m_i2.
+Proof.
+intros.
+rewrite H1 in H3. rewrite H2 in H3. unfold Pregmap.get, Pregmap.set, Pregmap.elt_eq. unfold Pregmap.get, Pregmap.set, Pregmap.elt_eq in H, H0, H3. destruct PregEq.eq.  destruct (m_i1 key) eqn: Hmi1, (m_i2 key) eqn: Hmi2; try discriminate. simpl in H3. apply inverse_vptr_equality in H3. destruct H3. apply vptr_equality. split. rewrite <- H3. reflexivity. auto with va. simpl in H4. apply H3.   apply vptr_equality.
+Admitted.  *)
+
+Lemma outcome_equality: forall (rs1 rs2: regset)(m1 m2: mem),  Next rs1 m1 = Next rs2 m2 -> rs1 = rs2 /\ m1 = m2. 
+    Proof. intros. inversion H. split; reflexivity. Qed.
+
+Lemma inverse_outcome_equality: forall (rs1 rs2: regset)(m1 m2: mem), rs1 = rs2 /\ m1 = m2 -> Next rs1 m1 = Next rs2 m2.
+Proof. intros. destruct H. rewrite H. rewrite H0. reflexivity. Qed.
+
+(* need some way of abstracting 
+for a given instruction if an argument is a data source/data sink*)
+
+(* terrible name but useful*)
+Definition my_preg_eq (r1 r2: preg): Prop :=
+    match r1, r2 with
+    | IR r1, IR r2 => r1 = r2
+    | FR r1, FR r2 => r1 = r2
+    | CR r1, CR r2 => r1 = r2
+    | SP, SP => True
+    | PC, PC => True
+    | _, _ => False
+    end.
+
+Remark mem_preg_isomorphism: forall r, my_preg_eq r r.
+Proof. intros. destruct r; reflexivity. Qed.
+
+
+
+Inductive data_resource: Type :=
+    | SingleReg: preg -> data_resource
+    | SingleMemAddr: memory_chunk -> val -> data_resource
+    | NoResource: data_resource.
+
+(* TODO: figure out addressing equality*)
+Definition data_res_eq (d1 d2: data_resource): Prop :=
+    match d1, d2 with
+    | SingleReg r1, SingleReg r2 => my_preg_eq r1 r2
+    | SingleMemAddr c1 a1, SingleMemAddr c2 a2 => c1 = c2 /\ a1 = a2
+    | _, _ => False
+    end.
+
+Definition data_res_of_iregz (r: ireg0) : data_resource :=
+    match r with 
+    | RR0 r => SingleReg (IR r) 
+    | XZR => NoResource
+    end.
+    
+    
+Remark data_res_isomorphism: forall r, r <> NoResource -> data_res_eq r r.
+Proof.
+    intros. destruct r. apply mem_preg_isomorphism. unfold data_res_eq. split; reflexivity. contradiction. 
+Qed.
+
+Lemma symb_data_eq: forall (x y: data_resource), {x=y} + {x<>y}.
+Proof. decide equality. apply preg_eq. apply Val.eq. apply AST.chunk_eq.
+Qed.
+
+(* TODO Check if data resource d is an input for address a. Requires checking the regs of A*)
+Definition data_address_src(a: addressing) (d: data_resource) : Prop := 
+   match a with
+   | ADimm base n => data_res_eq d (SingleReg (preg_of_iregsp base))
+   | ADreg base r => data_res_eq d (SingleReg (preg_of_iregsp base)) \/  data_res_eq d (SingleReg r) 
+   | ADlsl base r n => data_res_eq d  ( SingleReg (preg_of_iregsp base)) \/ data_res_eq d (SingleReg r) 
+   | ADsxt base r n => data_res_eq d (SingleReg (preg_of_iregsp base)) \/ data_res_eq d (SingleReg r) 
+   | ADuxt base r n => data_res_eq d (SingleReg (preg_of_iregsp base)) \/ data_res_eq d (SingleReg r) 
+   | ADadr base id ofs => data_res_eq d (SingleReg (preg_of_iregsp base))
+   | ADpostincr base n => True (* not modeled in CompCert*) 
+   end.
+
+
+
+ (* Check if data resource d is overwritten by a. Requires checking the evaluated expr*)
+ Definition data_address_sink (a: addressing) (d: data_resource) (g: genv) (r: regset): Prop := 
+    match d with
+    | SingleMemAddr _ val => eval_addressing g a r = val
+    | _ => False
+    end.
+
+(* TODO: change all instances of NoResource to false? kinda based*)
+
+(* Get a proposition representing if an instruction has a dependency on dr*)
+Definition data_source(i: instruction) (dr: data_resource): Prop := 
+    match i with 
+   (* Jump to*)
+   | Pb lbl => data_res_eq dr NoResource                                                    (**r branch *)
+   | Pbc c lbl  => data_res_eq dr (SingleReg (CR CZ))                                    (**r conditional branch *)
+   | Pbl id sg => data_res_eq dr (SingleReg PC)                                  (**r jump to function and link *)
+   | Pbs id sg => data_res_eq dr NoResource                                   (**r jump to function *)
+   | Pblr r sg  => data_res_eq dr (SingleReg PC)                                   (**r indirect jump and link *)
+   | Pbr r sg   => data_res_eq dr (SingleReg PC)                                   (**r indirect jump *)
+   | Pret r => data_res_eq dr NoResource                                                   (**r return *)
+   | Pcbnz sz r lbl    => data_res_eq dr (SingleReg r)                      (**r branch if not zero *)
+   | Pcbz sz r lbl => data_res_eq dr (SingleReg r)                         (**r branch if zero *)
+   | Ptbnz sz r n lbl   => data_res_eq dr (SingleReg r)               (**r branch if bit n is not zero *)
+   | Ptbz sz r n lbl => data_res_eq dr (SingleReg r)                  (**r branch if bit n is zero *)
+   (** Memory loads and stores *)
+   | Pldrw rd a => data_address_src a dr                             (**r load int32 *)
+   | Pldrw_a rd a => data_address_src a dr                                 (**r load int32 as any32 *)
+   | Pldrx rd a => data_address_src a dr                                  (**r load int64 *)
+   | Pldrx_a rd a => data_address_src a dr                                 (**r load int64 as any64 *)
+   | Pldrb sz rd a => data_address_src a dr                         (**r load int8, zero-extend *)
+   | Pldrsb sz rd a => data_address_src a dr                        (**r load int8, sign-extend *)
+   | Pldrh sz rd a => data_address_src a dr                        (**r load int16, zero-extend *)
+   | Pldrsh sz rd a => data_address_src a dr                        (**r load int16, sign-extend *)
+   | Pldrzw rd a  => data_address_src a dr                                  (**r load int32, zero-extend to int64 *)
+   | Pldrsw rd a => data_res_eq dr (SingleReg rd)                                 (**r load int32, sign-extend to int64 *)
+   | Pldp rd1 rd2 a => data_res_eq dr (SingleReg rd1) \/ data_res_eq dr (SingleReg rd2)                               (**r load two int64 *)
+   (** Stores *)
+   | Pstrw rs a => data_res_eq dr (SingleReg rs)                               (**r store int32 *)
+   | Pstrw_a rs a => data_res_eq dr (SingleReg rs)                                     (**r store int32 as any32 *)
+   | Pstrx rs a => data_res_eq dr (SingleReg rs)                                      (**r store int64 *)
+   | Pstrx_a rs a => data_res_eq dr (SingleReg rs)                                   (**r store int64 as any64 *)
+   | Pstrb rs a => data_res_eq dr (SingleReg rs)                                    (**r store int8 *)
+   | Pstrh rs a => data_res_eq dr (SingleReg rs)                                    (**r store int16 *)
+   | Pstp rs1 rs2 a => data_res_eq dr (SingleReg rs1)  \/ data_res_eq dr (SingleReg rs2)                               (**r store two int64 *)
+   (** Integer arithmetic, immediate *)
+   | Paddimm sz rd r1 n  => data_res_eq dr (SingleReg (preg_of_iregsp r1))            (**r addition *)
+   | Psubimm sz rd r1 n => data_res_eq dr (SingleReg (preg_of_iregsp r1))               (**r subtraction *)
+   | Pcmpimm sz r1 n => data_res_eq dr (SingleReg r1)                             (**r compare *)
+   | Pcmnimm sz r1 n => data_res_eq dr (SingleReg r1)                              (**r compare negative *)
+   (** Move integer register *)
+   | Pmov rd r1 => data_res_eq dr (SingleReg (preg_of_iregsp r1)) 
+   (** Logical, immediate *)
+   | Pandimm sz rd r1 n => data_res_eq dr (data_res_of_iregz r1)                 (**r and *)
+   | Peorimm sz rd r1 n => data_res_eq dr (data_res_of_iregz r1)                  (**r xor *)
+   | Porrimm sz rd r1 n => data_res_eq dr (data_res_of_iregz r1)                  (**r or *)
+   | Ptstimm sz r1 n => data_res_eq dr (SingleReg r1)                             (**r and, then set flags *)
+   (** Move wide immediate *)
+   | Pmovz sz rd n pos  => data_res_eq dr NoResource                     (**r move [n << pos] to [rd] *)
+   | Pmovn sz rd n pos  => data_res_eq dr NoResource                     (**r move [NOT(n << pos)] to [rd] *)
+   | Pmovk sz rd n pos  => data_res_eq dr NoResource                     (**r insert 16 bits of [n] at [pos] in rd *)
+   (** PC-relative addressing *)
+   | Padrp rd id ofs => data_res_eq dr NoResource                        (**r set [rd] to high address of [id + ofs] *)
+   | Paddadr rd r1 id ofs => data_res_eq dr (SingleReg r1)             (**r add the low address of [id + ofs] *)
+   (** Bit-field operations *)
+   | Psbfiz sz rd r1 r s => data_res_eq dr (SingleReg r1)           (**r sign extend and shift left *)
+   | Psbfx sz rd r1 r s => data_res_eq dr (SingleReg r1)           (**r shift right and sign extend *)
+   | Pubfiz sz rd r1 r s => data_res_eq dr (SingleReg r1)           (**r zero extend and shift left *)
+   | Pubfx sz rd r1 r s => data_res_eq dr (SingleReg r1)           (**r shift right and zero extend *)
+   (** Integer arithmetic, shifted register *)
+   | Padd sz rd r1 r2 s => data_res_eq dr (data_res_of_iregz r1) \/ data_res_eq dr (SingleReg r2)    (**r addition *)
+   | Psub sz rd r1 r2 s => data_res_eq dr (data_res_of_iregz r1) \/ data_res_eq dr (SingleReg r2)   (**r subtraction *)
+   | Pcmp sz r1 r2 s => data_res_eq dr (data_res_of_iregz r1) \/ data_res_eq dr (SingleReg r2)              (**r compare *)
+   | Pcmn sz r1 r2 s => data_res_eq dr (data_res_of_iregz r1) \/ data_res_eq dr (SingleReg r2)              (**r compare negative *)
+   (** Integer arithmetic, extending register *)
+   | Paddext rd r1 r2 x => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2)        (**r int64-int32 add *)
+   | Psubext rd r1 r2 x => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2)        (**r int64-int32 sub *)
+   | Pcmpext r1 r2 x => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2)                     (**r int64-int32 cmp *)
+   | Pcmnext r1 r2 x => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2)                       (**r int64-int32 cmn *)
+   (** Logical, shifted register *)
+   | Pand sz rd r1 r2 s => data_res_eq dr (data_res_of_iregz r1) \/ data_res_eq dr (SingleReg r2)   (**r and *)
+   | Pbic sz rd r1 r2 s => data_res_eq dr (data_res_of_iregz r1) \/ data_res_eq dr (SingleReg r2)   (**r and-not *)
+   | Peon sz rd r1 r2 s => data_res_eq dr (data_res_of_iregz r1) \/ data_res_eq dr (SingleReg r2)   (**r xor-not *)
+   | Peor sz rd r1 r2 s => data_res_eq dr (data_res_of_iregz r1) \/ data_res_eq dr (SingleReg r2)   (**r xor *)
+   | Porr sz rd r1 r2 s => data_res_eq dr (data_res_of_iregz r1) \/ data_res_eq dr (SingleReg r2)   (**r or *)
+   | Porn sz rd r1 r2 s => data_res_eq dr (data_res_of_iregz r1) \/ data_res_eq dr (SingleReg r2)   (**r or-not *)
+   | Ptst sz r1 r2 s => data_res_eq dr (data_res_of_iregz r1) \/ data_res_eq dr (SingleReg r2)                (**r and, then set flags *)
+   (** Variable shifts *)
+   | Pasrv sz rd r1 r2 => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2)                         (**r arithmetic right shift *)
+   | Plslv sz rd r1 r2 => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2)                         (**r left shift *)
+   | Plsrv sz rd r1 r2 => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2)                         (**r logical right shift *)
+   | Prorv sz rd r1 r2 => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2)                        (**r rotate right *)
+   (** Bit operations *)
+   | Pcls sz rd r1 => data_res_eq dr (SingleReg r1)                                    (**r count leading sign bits *)
+   | Pclz sz rd r1 => data_res_eq dr (SingleReg r1)                                     (**r count leading zero bits *)
+   | Prev sz rd r1 => data_res_eq dr (SingleReg r1)                                    (**r reverse bytes *)
+   | Prev16 sz rd r1 => data_res_eq dr (SingleReg r1)                                   (**r reverse bytes in each 16-bit word *)
+   | Prbit sz rd r1  => data_res_eq dr (SingleReg r1)                                   (**r reverse bits *)
+   (** Conditional data processing *)
+   | Pcsel rd r1 r2 c  => data_res_eq dr (SingleReg r1)  \/ data_res_eq dr (SingleReg r2)                      (**r int conditional move *)
+    (*TODO: wtf how do I handle conditions*)
+   | Pcset rd c => data_res_eq dr NoResource                                    (**r set to 1/0 if cond is true/false *)
+   (*
+   | Pcsetm rd c                                   (**r set to -1/0 if cond is true/false *)
+   *)
+   (** Integer multiply/divide *)
+   | Pmadd sz rd r1 r2 r3 =>  data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2) \/ data_res_eq dr (data_res_of_iregz r3)             (**r multiply-add *)
+   | Pmsub sz rd r1 r2 r3 => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2) \/ data_res_eq dr (data_res_of_iregz r3)            (**r multiply-sub *)
+   | Psmulh rd r1 r2 => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2)                                   (**r signed multiply high *)
+   | Pumulh rd r1 r2 => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2)                                   (**r unsigned multiply high *)
+   | Psdiv sz rd r1 r2 => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2)                       (**r signed division *)
+   | Pudiv sz rd r1 r2 => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2)                       (**r unsigned division *)
+   (** Floating-point loads and stores *)
+   | Pldrs rd a => data_address_src a dr                                   (**r load float32 (single precision) *)
+   | Pldrd rd a => data_address_src a dr                                  (**r load float64 (double precision) *)
+   | Pldrd_a rd a => data_address_src a dr                                (**r load float64 as any64 *)
+   | Pstrs rs a => data_res_eq dr (SingleReg rs)                                   (**r store float32 *)
+   | Pstrd rs a => data_res_eq dr (SingleReg rs)                                   (**r store float64 *)
+   | Pstrd_a rs a => data_res_eq dr (SingleReg rs)                                (**r store float64 as any64 *)
+   (** Floating-point move *)
+   | Pfmov rd r1 => data_res_eq dr (SingleReg r1) 
+   | Pfmovimms rd f  => data_res_eq dr NoResource                                (**r load float32 constant *)
+   | Pfmovimmd rd f  => data_res_eq dr NoResource                                  (**r load float64 constant *)
+   | Pfmovi fsz rd r1 => data_res_eq dr (data_res_of_iregz r1)                         (**r copy int reg to FP reg *)
+   (** Floating-point conversions *)
+   | Pfcvtds rd r1  => data_res_eq dr (SingleReg r1)                                            (**r convert float32 to float64 *)
+   | Pfcvtsd rd r1  => data_res_eq dr (SingleReg r1)                                           (**r convert float64 to float32 *)
+   | Pfcvtzs isz fsz rd r1 => data_res_eq dr (SingleReg r1)            (**r convert float to signed int *)
+   | Pfcvtzu isz fsz rd r1 => data_res_eq dr (SingleReg r1)           (**r convert float to unsigned int *)
+   | Pscvtf fsz isz rd r1 => data_res_eq dr (SingleReg r1)             (**r convert signed int to float *)
+   | Pucvtf fsz isz rd r1 => data_res_eq dr (SingleReg r1)            (**r convert unsigned int to float *)
+   (** Floating-point arithmetic *)
+   | Pfabs sz rd r1 => data_res_eq dr (SingleReg r1)                                    (**r absolute value *)
+   | Pfneg sz rd r1 => data_res_eq dr (SingleReg r1)                                    (**r negation *)
+   | Pfsqrt sz rd r1 => data_res_eq dr (SingleReg r1)                                   (**r square root *)
+   | Pfadd sz rd r1 r2 => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2)                                 (**r addition *)
+   | Pfdiv sz rd r1 r2  => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2)                               (**r division *)
+   | Pfmul sz rd r1 r2  => data_res_eq dr (SingleReg r1)  \/ data_res_eq dr (SingleReg r2)                             (**r multiplication *)
+   | Pfnmul sz rd r1 r2 => data_res_eq dr (SingleReg r1)  \/ data_res_eq dr (SingleReg r2)                             (**r multiply-negate *)
+   | Pfsub sz rd r1 r2 => data_res_eq dr (SingleReg r1)   \/ data_res_eq dr (SingleReg r2)                              (**r subtraction *)
+   | Pfmadd sz rd r1 r2 r3 => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2) \/ data_res_eq dr (SingleReg r3)                            (**r [rd = r3 + r1 * r2] *)
+   | Pfmsub sz rd r1 r2 r3 => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2) \/ data_res_eq dr (SingleReg r3)                            (**r [rd = r3 - r1 * r2] *)
+   | Pfnmadd sz rd r1 r2 r3 => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2) \/ data_res_eq dr (SingleReg r3)                           (**r [rd = - r3 - r1 * r2] *)
+   | Pfnmsub sz rd r1 r2 r3 => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2) \/ data_res_eq dr (SingleReg r3)                           (**r [rd = - r3 + r1 * r2] *)
+   | Pfmax sz rd r1 r2 => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2)                                (**r maximum *)
+   | Pfmin sz rd r1 r2 => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2)                               (**r minimum *)
+   (** Floating-point comparison *)
+   | Pfcmp sz r1 r2 => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2)                                   (**r compare [r1] and [r2] *)
+   | Pfcmp0 sz r1 => data_res_eq dr (SingleReg r1)                                      (**r compare [r1] and [+0.0] *)
+   (** Floating-point conditional select *)
+   (*TODO: figure out cond*)
+   | Pfsel rd r1 r2 cond => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2)
+   (** Pseudo-instructions *)
+   | Pallocframe sz linkofs => data_res_eq dr NoResource                              (**r allocate new stack frame *)
+   | Pfreeframe sz linkofs => data_res_eq dr NoResource                               (**r deallocate stack frame and restore previous frame *)
+   | Plabel lbl => data_res_eq dr NoResource                                                (**r define a code label *)
+   | Ploadsymbol rd id => data_res_eq dr NoResource                                 (**r load the address of [id] *)
+   | Pcvtsw2x rd r1 => data_res_eq dr (SingleReg r1)                                 (**r sign-extend 32-bit int to 64-bit *)
+   | Pcvtuw2x rd r1 => data_res_eq dr (SingleReg r1)                                  (**r zero-extend 32-bit int to 64-bit *)
+   | Pcvtx2w rd => data_res_eq dr (SingleReg rd)                                                 (**r retype a 64-bit int as a 32-bit int *)
+   | Pbtbl r1 tbl  => data_res_eq dr NoResource                              (**r N-way branch through a jump table *)
+   | Pbuiltin ef args res => data_res_eq dr NoResource   (**r built-in function (pseudo) *)
+   | Pnop => data_res_eq dr NoResource                                                             (**r no operation *)
+   | Pcfi_adjust ofs => data_res_eq dr NoResource                                           (**r .cfi_adjust debug directive *)
+   | Pcfi_rel_offset ofs  => data_res_eq dr NoResource                                       (**r .cfi_rel_offset debug directive *)
+   | Pincpc => data_res_eq dr (SingleReg PC) 
+    end.
+
+Definition data_sink(i: instruction) (dr: data_resource) (g: genv) (ers: regset): Prop := 
+    match i with
+    (*actual*)
+    (* Jump to*)
+    | Pb lbl => data_res_eq dr (SingleReg PC)                                                    (**r branch *)
+    | Pbc c lbl  => data_res_eq dr (SingleReg PC)                                    (**r conditional branch *)
+    | Pbl id sg => data_res_eq dr (SingleReg PC) \/ data_res_eq dr (SingleReg RA)                                    (**r jump to function and link *)
+    | Pbs id sg => data_res_eq dr (SingleReg PC)                                   (**r jump to function *)
+    | Pblr r sg  => data_res_eq dr (SingleReg PC)  \/ data_res_eq dr (SingleReg RA)                                (**r indirect jump and link *)
+    | Pbr r sg   => data_res_eq dr (SingleReg PC)                                   (**r indirect jump *)
+    | Pret r => data_res_eq dr (SingleReg PC)                                                     (**r return *)
+    | Pcbnz sz r lbl    => data_res_eq dr (SingleReg PC)                       (**r branch if not zero *)
+    | Pcbz sz r lbl => data_res_eq dr (SingleReg PC)                           (**r branch if zero *)
+    | Ptbnz sz r n lbl   => data_res_eq dr (SingleReg PC)               (**r branch if bit n is not zero *)
+    | Ptbz sz r n lbl => data_res_eq dr (SingleReg PC)                  (**r branch if bit n is zero *)
+    (** Memory loads and stores *)
+    | Pldrw rd a => data_res_eq dr (SingleReg rd)                                 (**r load int32 *)
+    | Pldrw_a rd a => data_res_eq dr (SingleReg rd)                                (**r load int32 as any32 *)
+    | Pldrx rd a => data_res_eq dr (SingleReg rd)                                 (**r load int64 *)
+    | Pldrx_a rd a => data_res_eq dr (SingleReg rd)                                (**r load int64 as any64 *)
+    | Pldrb sz rd a => data_res_eq dr (SingleReg (preg_of_iregsp rd))                        (**r load int8, zero-extend *)
+    | Pldrsb sz rd a => data_res_eq dr (SingleReg (preg_of_iregsp rd))                      (**r load int8, sign-extend *)
+    | Pldrh sz rd a => data_res_eq dr (SingleReg (preg_of_iregsp rd))                       (**r load int16, zero-extend *)
+    | Pldrsh sz rd a => data_res_eq dr (SingleReg (preg_of_iregsp rd))                      (**r load int16, sign-extend *)
+    | Pldrzw rd a  => data_res_eq dr (SingleReg rd)                                 (**r load int32, zero-extend to int64 *)
+    | Pldrsw rd a => data_res_eq dr (SingleReg rd)                                 (**r load int32, sign-extend to int64 *)
+    | Pldp rd1 rd2 a => data_res_eq dr (SingleReg rd1) \/ data_res_eq dr (SingleReg rd2)                               (**r load two int64 *)
+    (*TODO: check this works *)
+    (* explanation: check if r is a memory address and, if so, check if a stores in r. Can check by evaluating both??? *)
+    | Pstrw rs a => data_address_sink a dr g ers                                 (**r store int32 *)
+    | Pstrw_a rs a => data_address_sink a dr g ers                                  (**r store int32 as any32 *)
+    | Pstrx rs a => data_address_sink a dr g ers                                    (**r store int64 *)
+    | Pstrx_a rs a => data_address_sink a dr g ers                                  (**r store int64 as any64 *)
+    | Pstrb rs a => data_address_sink a dr g ers                                   (**r store int8 *)
+    | Pstrh rs a => data_address_sink a dr g ers                                   (**r store int16 *)
+    | Pstp rs1 rs2 a => data_address_sink a dr g ers                                (**r store two int64 *)
+    (** Integer arithmetic, immediate *)
+    | Paddimm sz rd r1 n  => data_res_eq dr (SingleReg (preg_of_iregsp rd))            (**r addition *)
+    | Psubimm sz rd r1 n => data_res_eq dr (SingleReg (preg_of_iregsp rd))               (**r subtraction *)
+    | Pcmpimm sz r1 n => data_res_eq dr (SingleReg (CR CZ))                             (**r compare *)
+    | Pcmnimm sz r1 n => data_res_eq dr (SingleReg (CR CZ))                              (**r compare negative *)
+    (** Move integer register *)
+    | Pmov rd r1 => data_res_eq dr (SingleReg (preg_of_iregsp rd)) 
+    (** Logical, immediate *)
+    | Pandimm sz rd r1 n => data_res_eq dr (SingleReg rd)                  (**r and *)
+    | Peorimm sz rd r1 n => data_res_eq dr (SingleReg rd)                  (**r xor *)
+    | Porrimm sz rd r1 n => data_res_eq dr (SingleReg (preg_of_iregsp rd))                  (**r or *)
+    | Ptstimm sz r1 n => data_res_eq dr (SingleReg (CR CZ))                             (**r and, then set flags *)
+    (** Move wide immediate *)
+    | Pmovz sz rd n pos  => data_res_eq dr (SingleReg rd)                     (**r move [n << pos] to [rd] *)
+    | Pmovn sz rd n pos  => data_res_eq dr (SingleReg rd)                     (**r move [NOT(n << pos)] to [rd] *)
+    | Pmovk sz rd n pos  => data_res_eq dr (SingleReg rd)                     (**r insert 16 bits of [n] at [pos] in rd *)
+    (** PC-relative addressing *)
+    | Padrp rd id ofs => data_res_eq dr (SingleReg rd)                        (**r set [rd] to high address of [id + ofs] *)
+    | Paddadr rd r1 id ofs => data_res_eq dr (SingleReg rd)             (**r add the low address of [id + ofs] *)
+    (** Bit-field operations *)
+    | Psbfiz sz rd r1 r s => data_res_eq dr (SingleReg rd)           (**r sign extend and shift left *)
+    | Psbfx sz rd r1 r s => data_res_eq dr (SingleReg rd)           (**r shift right and sign extend *)
+    | Pubfiz sz rd r1 r s => data_res_eq dr (SingleReg rd)           (**r zero extend and shift left *)
+    | Pubfx sz rd r1 r s => data_res_eq dr (SingleReg rd)           (**r shift right and zero extend *)
+    (** Integer arithmetic, shifted register *)
+    | Padd sz rd r1 r2 s => data_res_eq dr (SingleReg rd)    (**r addition *)
+    | Psub sz rd r1 r2 s => data_res_eq dr (SingleReg rd)   (**r subtraction *)
+    | Pcmp sz r1 r2 s => data_res_eq dr (SingleReg (CR CZ))              (**r compare *)
+    | Pcmn sz r1 r2 s => data_res_eq dr (SingleReg (CR CZ))              (**r compare negative *)
+    (** Integer arithmetic, extending register *)
+    | Paddext rd r1 r2 x => data_res_eq dr (SingleReg (preg_of_iregsp rd))        (**r int64-int32 add *)
+    | Psubext rd r1 r2 x => data_res_eq dr (SingleReg (preg_of_iregsp rd))        (**r int64-int32 sub *)
+    | Pcmpext r1 r2 x => data_res_eq dr (SingleReg (CR CZ))                      (**r int64-int32 cmp *)
+    | Pcmnext r1 r2 x => data_res_eq dr (SingleReg (CR CZ))                       (**r int64-int32 cmn *)
+    (** Logical, shifted register *)
+    | Pand sz rd r1 r2 s => data_res_eq dr (SingleReg rd)   (**r and *)
+    | Pbic sz rd r1 r2 s => data_res_eq dr (SingleReg rd)   (**r and-not *)
+    | Peon sz rd r1 r2 s => data_res_eq dr (SingleReg rd)   (**r xor-not *)
+    | Peor sz rd r1 r2 s => data_res_eq dr (SingleReg rd)   (**r xor *)
+    | Porr sz rd r1 r2 s => data_res_eq dr (SingleReg rd)   (**r or *)
+    | Porn sz rd r1 r2 s => data_res_eq dr (SingleReg rd)   (**r or-not *)
+    | Ptst sz r1 r2 s => data_res_eq dr (SingleReg (CR CZ))                (**r and, then set flags *)
+    (** Variable shifts *)
+    | Pasrv sz rd r1 r2 => data_res_eq dr (SingleReg rd)                         (**r arithmetic right shift *)
+    | Plslv sz rd r1 r2 => data_res_eq dr (SingleReg rd)                         (**r left shift *)
+    | Plsrv sz rd r1 r2 => data_res_eq dr (SingleReg rd)                         (**r logical right shift *)
+    | Prorv sz rd r1 r2 => data_res_eq dr (SingleReg rd)                        (**r rotate right *)
+    (** Bit operations *)
+    | Pcls sz rd r1 => data_res_eq dr (SingleReg rd)                                     (**r count leading sign bits *)
+    | Pclz sz rd r1 => data_res_eq dr (SingleReg rd)                                     (**r count leading zero bits *)
+    | Prev sz rd r1 => data_res_eq dr (SingleReg rd)                                    (**r reverse bytes *)
+    | Prev16 sz rd r1 => data_res_eq dr (SingleReg rd)                                   (**r reverse bytes in each 16-bit word *)
+    | Prbit sz rd r1  => data_res_eq dr (SingleReg rd)                                   (**r reverse bits *)
+    (** Conditional data processing *)
+    | Pcsel rd r1 r2 c  => data_res_eq dr (SingleReg rd)                     (**r int conditional move *)
+    | Pcset rd c => data_res_eq dr (SingleReg rd)                                     (**r set to 1/0 if cond is true/false *)
+    (*
+    | Pcsetm rd c                                   (**r set to -1/0 if cond is true/false *)
+    *)
+    (** Integer multiply/divide *)
+    | Pmadd sz rd r1 r2 r3 => data_res_eq dr (SingleReg rd)             (**r multiply-add *)
+    | Pmsub sz rd r1 r2 r3 => data_res_eq dr (SingleReg rd)             (**r multiply-sub *)
+    | Psmulh rd r1 r2 => data_res_eq dr (SingleReg rd)                                   (**r signed multiply high *)
+    | Pumulh rd r1 r2 => data_res_eq dr (SingleReg rd)                                    (**r unsigned multiply high *)
+    | Psdiv sz rd r1 r2 => data_res_eq dr (SingleReg rd)                        (**r signed division *)
+    | Pudiv sz rd r1 r2 => data_res_eq dr (SingleReg rd)                        (**r unsigned division *)
+    (** Floating-point loads and stores *)
+    | Pldrs rd a => data_res_eq dr (SingleReg rd)                                   (**r load float32 (single precision) *)
+    | Pldrd rd a => data_res_eq dr (SingleReg rd)                                  (**r load float64 (double precision) *)
+    | Pldrd_a rd a => data_res_eq dr (SingleReg rd)                                (**r load float64 as any64 *)
+    | Pstrs rs a => data_address_sink a dr g ers                                   (**r store float32 *)
+    | Pstrd rs a => data_address_sink a dr g ers                                   (**r store float64 *)
+    | Pstrd_a rs a => data_address_sink a dr g ers                                (**r store float64 as any64 *)
+    (** Floating-point move *)
+    | Pfmov rd r1 => data_res_eq dr (SingleReg rd) 
+    | Pfmovimms rd f  => data_res_eq dr (SingleReg rd)                                (**r load float32 constant *)
+    | Pfmovimmd rd f  => data_res_eq dr (SingleReg rd)                                  (**r load float64 constant *)
+    | Pfmovi fsz rd r1 => data_res_eq dr (SingleReg rd)                         (**r copy int reg to FP reg *)
+    (** Floating-point conversions *)
+    | Pfcvtds rd r1  => data_res_eq dr (SingleReg rd)                                            (**r convert float32 to float64 *)
+    | Pfcvtsd rd r1  => data_res_eq dr (SingleReg rd)                                           (**r convert float64 to float32 *)
+    | Pfcvtzs isz fsz rd r1 => data_res_eq dr (SingleReg rd)            (**r convert float to signed int *)
+    | Pfcvtzu isz fsz rd r1 => data_res_eq dr (SingleReg rd)           (**r convert float to unsigned int *)
+    | Pscvtf fsz isz rd r1 => data_res_eq dr (SingleReg rd)             (**r convert signed int to float *)
+    | Pucvtf fsz isz rd r1 => data_res_eq dr (SingleReg rd)            (**r convert unsigned int to float *)
+    (** Floating-point arithmetic *)
+    | Pfabs sz rd r1 => data_res_eq dr (SingleReg rd)                                    (**r absolute value *)
+    | Pfneg sz rd r1 => data_res_eq dr (SingleReg rd)                                    (**r negation *)
+    | Pfsqrt sz rd r1 => data_res_eq dr (SingleReg rd)                                   (**r square root *)
+    | Pfadd sz rd r1 r2 => data_res_eq dr (SingleReg rd)                                (**r addition *)
+    | Pfdiv sz rd r1 r2  => data_res_eq dr (SingleReg rd)                                (**r division *)
+    | Pfmul sz rd r1 r2  => data_res_eq dr (SingleReg rd)                               (**r multiplication *)
+    | Pfnmul sz rd r1 r2 => data_res_eq dr (SingleReg rd)                               (**r multiply-negate *)
+    | Pfsub sz rd r1 r2 => data_res_eq dr (SingleReg rd)                                 (**r subtraction *)
+    | Pfmadd sz rd r1 r2 r3 => data_res_eq dr (SingleReg rd)                             (**r [rd = r3 + r1 * r2] *)
+    | Pfmsub sz rd r1 r2 r3 => data_res_eq dr (SingleReg rd)                             (**r [rd = r3 - r1 * r2] *)
+    | Pfnmadd sz rd r1 r2 r3 => data_res_eq dr (SingleReg rd)                            (**r [rd = - r3 - r1 * r2] *)
+    | Pfnmsub sz rd r1 r2 r3 => data_res_eq dr (SingleReg rd)                           (**r [rd = - r3 + r1 * r2] *)
+    | Pfmax sz rd r1 r2 => data_res_eq dr (SingleReg rd)                                (**r maximum *)
+    | Pfmin sz rd r1 r2 => data_res_eq dr (SingleReg rd)                                (**r minimum *)
+    (** Floating-point comparison *)
+    | Pfcmp sz r1 r2 => data_res_eq dr (SingleReg (CR CZ))                                   (**r compare [r1] and [r2] *)
+    | Pfcmp0 sz r1 => data_res_eq dr (SingleReg (CR CZ))                                      (**r compare [r1] and [+0.0] *)
+    (** Floating-point conditional select *)
+    | Pfsel rd r1 r2 cond => data_res_eq dr (SingleReg rd) 
+    (** Pseudo-instructions *)
+    | Pallocframe sz linkofs => data_res_eq dr NoResource                              (**r allocate new stack frame *)
+    | Pfreeframe sz linkofs => data_res_eq dr NoResource                               (**r deallocate stack frame and restore previous frame *)
+    | Plabel lbl => data_res_eq dr NoResource                                                (**r define a code label *)
+    | Ploadsymbol rd id => data_res_eq dr (SingleReg rd)                                (**r load the address of [id] *)
+    | Pcvtsw2x rd r1 => data_res_eq dr (SingleReg rd)                                    (**r sign-extend 32-bit int to 64-bit *)
+    | Pcvtuw2x rd r1 => data_res_eq dr (SingleReg rd)                                    (**r zero-extend 32-bit int to 64-bit *)
+    | Pcvtx2w rd => data_res_eq dr (SingleReg rd)                                                 (**r retype a 64-bit int as a 32-bit int *)
+    | Pbtbl r1 tbl  => data_res_eq dr NoResource                              (**r N-way branch through a jump table *)
+    | Pbuiltin ef args res => data_res_eq dr NoResource   (**r built-in function (pseudo) *)
+    | Pnop => data_res_eq dr NoResource                                                             (**r no operation *)
+    | Pcfi_adjust ofs => data_res_eq dr NoResource                                           (**r .cfi_adjust debug directive *)
+    | Pcfi_rel_offset ofs  => data_res_eq dr NoResource                                       (**r .cfi_rel_offset debug directive *)
+    | Pincpc => data_res_eq dr (SingleReg PC) 
+end.
+
+
+
+Definition data_dependence(i1 i2: instruction) g rs: Prop :=
+    (exists r, data_sink i1 r g rs /\ data_source i2 r) \/ (exists r, data_sink i2 r g rs /\ data_source i1 r) \/ (exists r, data_sink i2 r g rs /\ data_sink i1 r g rs).
+
+
+Remark not_or_and : forall A B : Prop, ~(A \/ B) -> ~A /\ ~B.
+Proof.
+  intros A B H. split.
+    - intro. apply H. left. assumption.
+    - intro. apply H. right. assumption.
+Qed.
+
+Remark not_or_or_and : forall A B C : Prop, ~(A \/ B \/ C) -> ~A /\ ~B /\ ~C.
+Proof.
+  intros A B C H. split; [|split].
+  - intro HA. apply H. left. assumption.
+  - intro HB. apply H. right. left. assumption.
+  - intro HC. apply H. right. right. assumption.
+Qed.
+
+Lemma hazard_elimination_identity: forall r1, ~(exists r2: data_resource, data_res_eq r2 r1 /\ True) -> r1 <> NoResource -> False.
+Proof. intros. apply H. exists r1. split. apply data_res_isomorphism. apply H0. reflexivity. Qed.
+
+Lemma hazard_elimination: forall (d: data_resource), ~ (exists r : data_resource, data_res_eq r (d) /\ data_res_eq r (d)) -> d <> NoResource -> False.
+Proof. intros. apply H. exists d. split; apply data_res_isomorphism; apply H0. 
+Qed.
+
+(* Remark wtf_left: forall P Q, ~((exists _ : preg, True /\ True) \/ P \/ Q) -> False.
+Proof.
+    unfold not.
+    intros. apply H. left. exists PC. split; reflexivity.
+Qed.
+
+Remark wtf_mid: forall P Q, ~(P \/ (exists _ : preg, True /\ True) \/ Q) -> False.
+Proof.
+    unfold not.
+    intros. apply H. right. left. exists PC. split; reflexivity.
+Qed.
+
+
+Remark wtf_right: forall P Q, ~( P \/ Q \/ (exists _ : preg, True /\ True)) -> False.
+Proof.
+    unfold not.
+    intros. apply H. right. right. exists PC. split; reflexivity.
+Qed.
+ *)
+
+
+ Remark regs_are_different_resources: forall r1 r2, ~
+ (exists r : data_resource, data_res_eq r (SingleReg r1) /\ data_res_eq r (SingleReg r2)) -> r1 <> r2.
+ Proof.
+ unfold not. intros. apply H. exists (SingleReg r1). 
+ split. try apply data_res_isomorphism.  unfold not; intros; discriminate H1.
+  try (rewrite <- H0; apply data_res_isomorphism). unfold not; intros; discriminate H1.
+Qed.
+
+Theorem reorder: forall  g (f: function) (i1 i2: instruction)  (rs_i rs_t1 rs_t2 rs_f: regset)  (m_i m_t1 m_t2 m_f: mem), ~data_dependence i1 i2 g rs_i -> exec_instr g f i1 rs_i m_i = Next rs_t1 m_t1 -> exec_instr g f i2 rs_i m_i = Next rs_t2 m_t2 -> exec_instr g f i2 rs_t1 m_t1 = Next rs_f m_f -> exec_instr g f i1 rs_t2 m_t2 = Next rs_f m_f.
+Proof. intros. 
+(* Definition unwrapping*)
+unfold data_dependence in H. unfold data_sink, data_source in H. destruct i1. destruct i2; apply not_or_or_and in H; destruct H; destruct H3;
+(* Remove data hazards that hit the same singleton register (eg PC, CR)*)
+try (apply hazard_elimination in H4;  contradiction +  unfold not;  intros;  discriminate H5);
+try (apply hazard_elimination in H;  contradiction +  unfold not;  intros;  discriminate H5);
+try (apply hazard_elimination in H3;  contradiction +  unfold not;  intros;  discriminate H5);
+
+
+(* Remove data hazards that hit True - maybe WIP?*)
+try (apply hazard_elimination_identity in H; contradiction + unfold not; intros; discriminate H5);
+
+try (apply hazard_elimination_identity in H3; contradiction + unfold not; intros; discriminate H5);
+
+try (apply hazard_elimination_identity in H4; contradiction + unfold not; intros; discriminate H5).
+
+ unfold exec_instr in H0, H1, H2. unfold exec_instr. unfold goto_label. unfold goto_label in H0. unfold exec_load in H1, H2. 
+ destruct (Mem.loadv Mint32 m_t1 (eval_addressing g a rs_t1)).  inversion H2.
+ destruct (Mem.loadv Mint32 m_i (eval_addressing g a rs_i)). inversion H1. unfold nextinstr in H6, H8.
+ destruct (label_pos lbl 0 (fn_code f)). destruct (rs_i PC); try discriminate. inversion H0. unfold nextinstr. rewrite -> H8. 
+ 
+ destruct (rs_i # rd <- v0 PC); try discriminate. contradiction. unfold eval_addressing in H1, H2.
+
+Qed.
