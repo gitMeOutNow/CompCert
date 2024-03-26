@@ -690,446 +690,450 @@ Definition float64_of_bits (v: val): val :=
     survive the execution of the pseudo-instruction.
 *)
 
-Definition exec_instr (f: function) (i: instruction) (rs: regset) (m: mem) : outcome :=
-  match i with
-  (** Branches *)
-  | Pb lbl =>
-      goto_label f lbl rs m
-  | Pbc cond lbl =>
-      match eval_testcond cond rs with
-      | Some true => goto_label f lbl rs m
-      | Some false => Next (nextinstr rs) m
-      | None => Stuck
-      end
-  | Pbl id sg =>
-      Next (rs#RA <- (Val.offset_ptr rs#PC Ptrofs.one) #PC <- (Genv.symbol_address ge id Ptrofs.zero)) m
-  | Pbs id sg =>
-      Next (rs#PC <- (Genv.symbol_address ge id Ptrofs.zero)) m
-  | Pblr r sg =>
-      Next (rs#RA <- (Val.offset_ptr rs#PC Ptrofs.one) #PC <- (rs#r)) m
-  | Pbr r sg =>
-      Next (rs#PC <- (rs#r)) m
-  | Pret r =>
-      Next (rs#PC <- (rs#r)) m
-  | Pcbnz sz r lbl =>
-      match eval_testzero sz rs#r m with
-      | Some true => Next (nextinstr rs) m
-      | Some false => goto_label f lbl rs m
-      | None => Stuck
-      end
-  | Pcbz sz r lbl =>
-      match eval_testzero sz rs#r m with
-      | Some true => goto_label f lbl rs m
-      | Some false => Next (nextinstr rs) m
-      | None => Stuck
-      end
-  | Ptbnz sz r n lbl =>
-      match eval_testbit sz rs#r n with
-      | Some true => goto_label f lbl rs m
-      | Some false => Next (nextinstr rs) m
-      | None => Stuck
-      end
-  | Ptbz sz r n lbl =>
-      match eval_testbit sz rs#r n with
-      | Some true => Next (nextinstr rs) m
-      | Some false => goto_label f lbl rs m
-      | None => Stuck
-      end
-  (** Memory loads and stores *)
-  | Pldrw rd a =>
-      exec_load Mint32 (fun v => v) a rd rs m
-  | Pldrw_a rd a =>
-      exec_load Many32 (fun v => v) a rd rs m
-  | Pldrx rd a =>
-      exec_load Mint64 (fun v => v) a rd rs m
-  | Pldrx_a rd a =>
-      exec_load Many64 (fun v => v) a rd rs m
-  | Pldrb W rd a =>
-      exec_load Mint8unsigned (fun v => v) a rd rs m
-  | Pldrb X rd a =>
-      exec_load Mint8unsigned Val.longofintu a rd rs m
-  | Pldrsb W rd a =>
-      exec_load Mint8signed (fun v => v) a rd rs m
-  | Pldrsb X rd a =>
-      exec_load Mint8signed Val.longofint a rd rs m
-  | Pldrh W rd a =>
-      exec_load Mint16unsigned (fun v => v) a rd rs m
-  | Pldrh X rd a =>
-      exec_load Mint16unsigned Val.longofintu a rd rs m
-  | Pldrsh W rd a =>
-      exec_load Mint16signed (fun v => v) a rd rs m
-  | Pldrsh X rd a =>
-      exec_load Mint16signed Val.longofint a rd rs m
-  | Pldrzw rd a =>
-      exec_load Mint32 Val.longofintu a rd rs m
-  | Pldrsw rd a =>
-      exec_load Mint32 Val.longofint a rd rs m
-  | Pstrw r a =>
-      exec_store Mint32 a rs#r rs m
-  | Pstrw_a r a =>
-      exec_store Many32 a rs#r rs m
-  | Pstrx r a =>
-      exec_store Mint64 a rs#r rs m
-  | Pstrx_a r a =>
-      exec_store Many64 a rs#r rs m
-  | Pstrb r a =>
-      exec_store Mint8unsigned a rs#r rs m
-  | Pstrh r a =>
-      exec_store Mint16unsigned a rs#r rs m
-  (** Integer arithmetic, immediate *)
-  | Paddimm W rd r1 n =>
-      Next (nextinstr (rs#rd <- (Val.add rs#r1 (Vint (Int.repr n))))) m
-  | Paddimm X rd r1 n =>
-      Next (nextinstr (rs#rd <- (Val.addl rs#r1 (Vlong (Int64.repr n))))) m
-  | Psubimm W rd r1 n =>
-      Next (nextinstr (rs#rd <- (Val.sub rs#r1 (Vint (Int.repr n))))) m
-  | Psubimm X rd r1 n =>
-      Next (nextinstr (rs#rd <- (Val.subl rs#r1 (Vlong (Int64.repr n))))) m
-  | Pcmpimm W r1 n =>
-      Next (nextinstr (compare_int rs rs#r1 (Vint (Int.repr n)) m)) m
-  | Pcmpimm X r1 n =>
-      Next (nextinstr (compare_long rs rs#r1 (Vlong (Int64.repr n)) m)) m
-  | Pcmnimm W r1 n =>
-      Next (nextinstr (compare_int rs rs#r1 (Vint (Int.neg (Int.repr n))) m)) m
-  | Pcmnimm X r1 n =>
-      Next (nextinstr (compare_long rs rs#r1 (Vlong (Int64.neg (Int64.repr n))) m)) m
-  (** Move integer register *)
-  | Pmov rd r1 =>
-      Next ( nextinstr (rs#rd <- (rs#r1))) m
-  (** Logical, immediate *)
-  | Pandimm W rd r1 n =>
-      Next (nextinstr (rs#rd <- (Val.and rs##r1 (Vint (Int.repr n))))) m
-  | Pandimm X rd r1 n =>
-      Next (nextinstr (rs#rd <- (Val.andl rs###r1 (Vlong (Int64.repr n))))) m
-  | Peorimm W rd r1 n =>
-      Next (nextinstr (rs#rd <- (Val.xor rs##r1 (Vint (Int.repr n))))) m
-  | Peorimm X rd r1 n =>
-      Next (nextinstr (rs#rd <- (Val.xorl rs###r1 (Vlong (Int64.repr n))))) m
-  | Porrimm W rd r1 n =>
-      Next (nextinstr (rs#rd <- (Val.or rs##r1 (Vint (Int.repr n))))) m
-  | Porrimm X rd r1 n =>
-      Next (nextinstr (rs#rd <- (Val.orl rs###r1 (Vlong (Int64.repr n))))) m
-  | Ptstimm W r1 n =>
-      Next (nextinstr (compare_int rs (Val.and rs#r1 (Vint (Int.repr n))) (Vint Int.zero) m)) m
-  | Ptstimm X r1 n =>
-      Next (nextinstr (compare_long rs (Val.andl rs#r1 (Vlong (Int64.repr n))) (Vlong Int64.zero) m)) m
-  (** Move wide immediate *)
-  | Pmovz W rd n pos =>
-      Next (nextinstr (rs#rd <- (Vint (Int.repr (Z.shiftl n pos))))) m
-  | Pmovz X rd n pos =>
-      Next (nextinstr (rs#rd <- (Vlong (Int64.repr (Z.shiftl n pos))))) m
-  | Pmovn W rd n pos =>
-      Next (nextinstr (rs#rd <- (Vint (Int.repr (Z.lnot (Z.shiftl n pos)))))) m
-  | Pmovn X rd n pos =>
-      Next (nextinstr (rs#rd <- (Vlong (Int64.repr (Z.lnot (Z.shiftl n pos)))))) m
-  | Pmovk W rd n pos =>
-      Next (nextinstr (rs#rd <- (insert_in_int rs#rd n pos 16))) m
-  | Pmovk X rd n pos =>
-      Next (nextinstr (rs#rd <- (insert_in_long rs#rd n pos 16))) m
-  (** PC-relative addressing *)
-  | Padrp rd id ofs =>
-      Next (nextinstr (rs#rd <- (symbol_high ge id ofs))) m
-  | Paddadr rd r1 id ofs =>
-      Next (nextinstr (rs#rd <- (Val.addl rs#r1 (symbol_low ge id ofs)))) m
-  (** Bit-field operations *)
-  | Psbfiz W rd r1 r s =>
-      Next (nextinstr (rs#rd <- (Val.shl (Val.sign_ext s rs#r1) (Vint r)))) m
-  | Psbfiz X rd r1 r s =>
-      Next (nextinstr (rs#rd <- (Val.shll (Val.sign_ext_l s rs#r1) (Vint r)))) m
-  | Psbfx W rd r1 r s =>
-      Next (nextinstr (rs#rd <- (Val.sign_ext s (Val.shr rs#r1 (Vint r))))) m
-  | Psbfx X rd r1 r s =>
-      Next (nextinstr (rs#rd <- (Val.sign_ext_l s (Val.shrl rs#r1 (Vint r))))) m
-  | Pubfiz W rd r1 r s =>
-      Next (nextinstr (rs#rd <- (Val.shl (Val.zero_ext s rs#r1) (Vint r)))) m
-  | Pubfiz X rd r1 r s =>
-      Next (nextinstr (rs#rd <- (Val.shll (Val.zero_ext_l s rs#r1) (Vint r)))) m
-  | Pubfx W rd r1 r s =>
-      Next (nextinstr (rs#rd <- (Val.zero_ext s (Val.shru rs#r1 (Vint r))))) m
-  | Pubfx X rd r1 r s =>
-      Next (nextinstr (rs#rd <- (Val.zero_ext_l s (Val.shrlu rs#r1 (Vint r))))) m
-  (** Integer arithmetic, shifted register *)
-  | Padd W rd r1 r2 s =>
-      Next (nextinstr (rs#rd <- (Val.add rs##r1 (eval_shift_op_int rs#r2 s)))) m
-  | Padd X rd r1 r2 s =>
-      Next (nextinstr (rs#rd <- (Val.addl rs###r1 (eval_shift_op_long rs#r2 s)))) m
-  | Psub W rd r1 r2 s =>
-      Next (nextinstr (rs#rd <- (Val.sub rs##r1 (eval_shift_op_int rs#r2 s)))) m
-  | Psub X rd r1 r2 s =>
-      Next (nextinstr (rs#rd <- (Val.subl rs###r1 (eval_shift_op_long rs#r2 s)))) m
-  | Pcmp W r1 r2 s =>
-      Next (nextinstr (compare_int rs rs##r1 (eval_shift_op_int rs#r2 s) m)) m
-  | Pcmp X r1 r2 s =>
-      Next (nextinstr (compare_long rs rs###r1 (eval_shift_op_long rs#r2 s) m)) m
-  | Pcmn W r1 r2 s =>
-      Next (nextinstr (compare_int rs rs##r1 (Val.neg (eval_shift_op_int rs#r2 s)) m)) m
-  | Pcmn X r1 r2 s =>
-      Next (nextinstr (compare_long rs rs###r1 (Val.negl (eval_shift_op_long rs#r2 s)) m)) m
-  (** Integer arithmetic, extending register *)
-  | Paddext rd r1 r2 x =>
-      Next (nextinstr (rs#rd <- (Val.addl rs#r1 (eval_extend rs#r2 x)))) m
-  | Psubext rd r1 r2 x =>
-      Next (nextinstr (rs#rd <- (Val.subl rs#r1 (eval_extend rs#r2 x)))) m
-  | Pcmpext r1 r2 x =>
-      Next (nextinstr (compare_long rs rs#r1 (eval_extend rs#r2 x) m)) m
-  | Pcmnext r1 r2 x =>
-      Next (nextinstr (compare_long rs rs#r1 (Val.negl (eval_extend rs#r2 x)) m)) m
-  (** Logical, shifted register *)
-  | Pand W rd r1 r2 s =>
-      Next (nextinstr (rs#rd <- (Val.and rs##r1 (eval_shift_op_int rs#r2 s)))) m
-  | Pand X rd r1 r2 s =>
-      Next (nextinstr (rs#rd <- (Val.andl rs###r1 (eval_shift_op_long rs#r2 s)))) m
-  | Pbic W rd r1 r2 s =>
-      Next (nextinstr (rs#rd <- (Val.and rs##r1 (Val.notint (eval_shift_op_int rs#r2 s))))) m
-  | Pbic X rd r1 r2 s =>
-      Next (nextinstr (rs#rd <- (Val.andl rs###r1 (Val.notl (eval_shift_op_long rs#r2 s))))) m
-  | Peon W rd r1 r2 s =>
-      Next (nextinstr (rs#rd <- (Val.xor rs##r1 (Val.notint (eval_shift_op_int rs#r2 s))))) m
-  | Peon X rd r1 r2 s =>
-      Next (nextinstr (rs#rd <- (Val.xorl rs###r1 (Val.notl (eval_shift_op_long rs#r2 s))))) m
-  | Peor W rd r1 r2 s =>
-      Next (nextinstr (rs#rd <- (Val.xor rs##r1 (eval_shift_op_int rs#r2 s)))) m
-  | Peor X rd r1 r2 s =>
-      Next (nextinstr (rs#rd <- (Val.xorl rs###r1 (eval_shift_op_long rs#r2 s)))) m
-  | Porr W rd r1 r2 s =>
-      Next (nextinstr (rs#rd <- (Val.or rs##r1 (eval_shift_op_int rs#r2 s)))) m
-  | Porr X rd r1 r2 s =>
-      Next (nextinstr (rs#rd <- (Val.orl rs###r1 (eval_shift_op_long rs#r2 s)))) m
-  | Porn W rd r1 r2 s =>
-      Next (nextinstr (rs#rd <- (Val.or rs##r1 (Val.notint (eval_shift_op_int rs#r2 s))))) m
-  | Porn X rd r1 r2 s =>
-      Next (nextinstr (rs#rd <- (Val.orl rs###r1 (Val.notl (eval_shift_op_long rs#r2 s))))) m
-  | Ptst W r1 r2 s =>
-      Next (nextinstr (compare_int rs (Val.and rs##r1 (eval_shift_op_int rs#r2 s)) (Vint Int.zero) m)) m
-  | Ptst X r1 r2 s =>
-      Next (nextinstr (compare_long rs (Val.andl rs###r1 (eval_shift_op_long rs#r2 s)) (Vlong Int64.zero) m)) m
-  (** Variable shifts *)
-  | Pasrv W rd r1 r2 =>
-      Next (nextinstr (rs#rd <- (Val.shr rs#r1 rs#r2))) m
-  | Pasrv X rd r1 r2 =>
-      Next (nextinstr (rs#rd <- (Val.shrl rs#r1 rs#r2))) m
-  | Plslv W rd r1 r2 =>
-      Next (nextinstr (rs#rd <- (Val.shl rs#r1 rs#r2))) m
-  | Plslv X rd r1 r2 =>
-      Next (nextinstr (rs#rd <- (Val.shll rs#r1 rs#r2))) m
-  | Plsrv W rd r1 r2 =>
-      Next (nextinstr (rs#rd <- (Val.shru rs#r1 rs#r2))) m
-  | Plsrv X rd r1 r2 =>
-      Next (nextinstr (rs#rd <- (Val.shrlu rs#r1 rs#r2))) m
-  | Prorv W rd r1 r2 =>
-      Next (nextinstr (rs#rd <- (Val.ror rs#r1 rs#r2))) m
-  | Prorv X rd r1 r2 =>
-      Next (nextinstr (rs#rd <- (Val.rorl rs#r1 rs#r2))) m
-  (** Conditional data processing *)
-  | Pcsel rd r1 r2 cond =>
-      let v :=
+Definition exec_instr (f: function) (i: instruction) (o: outcome) : outcome :=
+  match o with 
+    | Stuck => Stuck
+    | Next rs m =>
+    match i with
+    (** Branches *)
+    | Pb lbl =>
+        goto_label f lbl rs m
+    | Pbc cond lbl =>
         match eval_testcond cond rs with
-        | Some true => rs#r1
-        | Some false => rs#r2
-        | None => Vundef
-        end in
-      Next (nextinstr (rs#rd <- v)) m
-  | Pcset rd cond =>
-      let v :=
-        match eval_testcond cond rs with
-        | Some true => Vint Int.one
-        | Some false => Vint Int.zero
-        | None => Vundef
-        end in
-      Next (nextinstr (rs#rd <- v)) m
-  (** Integer multiply/divide *)
-  | Pmadd W rd r1 r2 r3 =>
-      Next (nextinstr (rs#rd <- (Val.add rs##r3 (Val.mul rs#r1 rs#r2)))) m
-  | Pmadd X rd r1 r2 r3 =>
-      Next (nextinstr (rs#rd <- (Val.addl rs###r3 (Val.mull rs#r1 rs#r2)))) m
-  | Pmsub W rd r1 r2 r3 =>
-      Next (nextinstr (rs#rd <- (Val.sub rs##r3 (Val.mul rs#r1 rs#r2)))) m
-  | Pmsub X rd r1 r2 r3 =>
-      Next (nextinstr (rs#rd <- (Val.subl rs###r3 (Val.mull rs#r1 rs#r2)))) m
-  | Psmulh rd r1 r2 =>
-      Next (nextinstr (rs#rd <- (Val.mullhs rs#r1 rs#r2))) m
-  | Pumulh rd r1 r2 =>
-      Next (nextinstr (rs#rd <- (Val.mullhu rs#r1 rs#r2))) m
-  | Psdiv W rd r1 r2 =>
-      Next (nextinstr (rs#rd <- (Val.maketotal (Val.divs rs#r1 rs#r2)))) m
-  | Psdiv X rd r1 r2 =>
-      Next (nextinstr (rs#rd <- (Val.maketotal (Val.divls rs#r1 rs#r2)))) m
-  | Pudiv W rd r1 r2 =>
-      Next (nextinstr (rs#rd <- (Val.maketotal (Val.divu rs#r1 rs#r2)))) m
-  | Pudiv X rd r1 r2 =>
-      Next (nextinstr (rs#rd <- (Val.maketotal (Val.divlu rs#r1 rs#r2)))) m
-  (** Floating-point loads and stores *)
-  | Pldrs rd a =>
-      exec_load Mfloat32 (fun v => v) a rd rs m
-  | Pldrd rd a =>
-      exec_load Mfloat64 (fun v => v) a rd rs m
-  | Pldrd_a rd a =>
-      exec_load Many64 (fun v => v) a rd rs m
-  | Pstrs r a =>
-      exec_store Mfloat32 a rs#r rs m
-  | Pstrd r a =>
-      exec_store Mfloat64 a rs#r rs m
-  | Pstrd_a r a =>
-      exec_store Many64 a rs#r rs m
-  (** Floating-point move *)
-  | Pfmov rd r1 =>
-      Next (nextinstr (rs#rd <- (rs#r1))) m
-  | Pfmovimms rd f =>
-      Next (nextinstr (rs#X16 <- Vundef #rd <- (Vsingle f))) m
-  | Pfmovimmd rd f =>
-      Next (nextinstr (rs#X16 <- Vundef #rd <- (Vfloat f))) m
-  | Pfmovi S rd r1 =>
-      Next (nextinstr (rs#rd <- (float32_of_bits rs##r1))) m
-  | Pfmovi D rd r1 =>
-      Next (nextinstr (rs#rd <- (float64_of_bits rs###r1))) m
-  (** Floating-point conversions *)
-  | Pfcvtds rd r1 =>
-      Next (nextinstr (rs#rd <- (Val.floatofsingle rs#r1))) m
-  | Pfcvtsd rd r1 =>
-      Next (nextinstr (rs#rd <- (Val.singleoffloat rs#r1))) m
-  | Pfcvtzs W S rd r1 =>
-      Next (nextinstr (rs#rd <- (Val.maketotal (Val.intofsingle rs#r1)))) m
-  | Pfcvtzs W D rd r1 =>
-      Next (nextinstr (rs#rd <- (Val.maketotal (Val.intoffloat rs#r1)))) m
-  | Pfcvtzs X S rd r1 =>
-      Next (nextinstr (rs#rd <- (Val.maketotal (Val.longofsingle rs#r1)))) m
-  | Pfcvtzs X D rd r1 =>
-      Next (nextinstr (rs#rd <- (Val.maketotal (Val.longoffloat rs#r1)))) m
-  | Pfcvtzu W S rd r1 =>
-      Next (nextinstr (rs#rd <- (Val.maketotal (Val.intuofsingle rs#r1)))) m
-  | Pfcvtzu W D rd r1 =>
-      Next (nextinstr (rs#rd <- (Val.maketotal (Val.intuoffloat rs#r1)))) m
-  | Pfcvtzu X S rd r1 =>
-      Next (nextinstr (rs#rd <- (Val.maketotal (Val.longuofsingle rs#r1)))) m
-  | Pfcvtzu X D rd r1 =>
-      Next (nextinstr (rs#rd <- (Val.maketotal (Val.longuoffloat rs#r1)))) m
-  | Pscvtf S W rd r1 =>
-      Next (nextinstr (rs#rd <- (Val.maketotal (Val.singleofint rs#r1)))) m
-  | Pscvtf D W rd r1 =>
-      Next (nextinstr (rs#rd <- (Val.maketotal (Val.floatofint rs#r1)))) m
-  | Pscvtf S X rd r1 =>
-      Next (nextinstr (rs#rd <- (Val.maketotal (Val.singleoflong rs#r1)))) m
-  | Pscvtf D X rd r1 =>
-      Next (nextinstr (rs#rd <- (Val.maketotal (Val.floatoflong rs#r1)))) m
-  | Pucvtf S W rd r1 =>
-      Next (nextinstr (rs#rd <- (Val.maketotal (Val.singleofintu rs#r1)))) m
-  | Pucvtf D W rd r1 =>
-      Next (nextinstr (rs#rd <- (Val.maketotal (Val.floatofintu rs#r1)))) m
-  | Pucvtf S X rd r1 =>
-      Next (nextinstr (rs#rd <- (Val.maketotal (Val.singleoflongu rs#r1)))) m
-  | Pucvtf D X rd r1 =>
-      Next (nextinstr (rs#rd <- (Val.maketotal (Val.floatoflongu rs#r1)))) m
-  (** Floating-point arithmetic *)
-  | Pfabs S rd r1 =>
-      Next (nextinstr (rs#rd <- (Val.absfs rs#r1))) m
-  | Pfabs D rd r1 =>
-      Next (nextinstr (rs#rd <- (Val.absf rs#r1))) m
-  | Pfneg S rd r1 =>
-      Next (nextinstr (rs#rd <- (Val.negfs rs#r1))) m
-  | Pfneg D rd r1 =>
-      Next (nextinstr (rs#rd <- (Val.negf rs#r1))) m
-  | Pfadd S rd r1 r2 =>
-      Next (nextinstr (rs#rd <- (Val.addfs rs#r1 rs#r2))) m
-  | Pfadd D rd r1 r2 =>
-      Next (nextinstr (rs#rd <- (Val.addf rs#r1 rs#r2))) m
-  | Pfdiv S rd r1 r2 =>
-      Next (nextinstr (rs#rd <- (Val.divfs rs#r1 rs#r2))) m
-  | Pfdiv D rd r1 r2 =>
-      Next (nextinstr (rs#rd <- (Val.divf rs#r1 rs#r2))) m
-  | Pfmul S rd r1 r2 =>
-      Next (nextinstr (rs#rd <- (Val.mulfs rs#r1 rs#r2))) m
-  | Pfmul D rd r1 r2 =>
-      Next (nextinstr (rs#rd <- (Val.mulf rs#r1 rs#r2))) m
-  | Pfnmul S rd r1 r2 =>
-      Next (nextinstr (rs#rd <- (Val.negfs (Val.mulfs rs#r1 rs#r2)))) m
-  | Pfnmul D rd r1 r2 =>
-      Next (nextinstr (rs#rd <- (Val.negf (Val.mulf rs#r1 rs#r2)))) m
-  | Pfsub S rd r1 r2 =>
-      Next (nextinstr (rs#rd <- (Val.subfs rs#r1 rs#r2))) m
-  | Pfsub D rd r1 r2 =>
-      Next (nextinstr (rs#rd <- (Val.subf rs#r1 rs#r2))) m
-  (** Floating-point comparison *)
-  | Pfcmp S r1 r2 =>
-      Next (nextinstr (compare_single rs rs#r1 rs#r2)) m
-  | Pfcmp D r1 r2 =>
-      Next (nextinstr (compare_float rs rs#r1 rs#r2)) m
-  | Pfcmp0 S r1 =>
-      Next (nextinstr (compare_single rs rs#r1 (Vsingle Float32.zero))) m
-  | Pfcmp0 D r1 =>
-      Next (nextinstr (compare_float rs rs#r1 (Vfloat Float.zero))) m
-  (** Floating-point conditional select *)
-  | Pfsel rd r1 r2 cond =>
-      let v :=
-        match eval_testcond cond rs with
-        | Some true => rs#r1
-        | Some false => rs#r2
-        | None => Vundef
-        end in
-      Next (nextinstr (rs#rd <- v)) m
-  (** Pseudo-instructions *)
-  | Pallocframe sz pos =>
-      let (m1, stk) := Mem.alloc m 0 sz in
-      let sp := (Vptr stk Ptrofs.zero) in
-      match Mem.storev Mint64 m1 (Val.offset_ptr sp pos) rs#SP with
-      | None => Stuck
-      | Some m2 => Next (nextinstr (rs #X15 <- (rs#SP) #SP <- sp #X16 <- Vundef)) m2
-      end
-  | Pfreeframe sz pos =>
-      match Mem.loadv Mint64 m (Val.offset_ptr rs#SP pos) with
-      | None => Stuck
-      | Some v =>
-          match rs#SP with
-          | Vptr stk ofs =>
-              match Mem.free m stk 0 sz with
-              | None => Stuck
-              | Some m' => Next (nextinstr (rs#SP <- v #X16 <- Vundef)) m'
-              end
-          | _ => Stuck
-          end
-      end
-  | Plabel lbl =>
-      Next (nextinstr rs) m
-  | Ploadsymbol rd id =>
-      Next (nextinstr (rs#rd <- (Genv.symbol_address ge id Ptrofs.zero))) m
-  | Pcvtsw2x rd r1 =>
-      Next (nextinstr (rs#rd <- (Val.longofint rs#r1))) m
-  | Pcvtuw2x rd r1 =>
-      Next (nextinstr (rs#rd <- (Val.longofintu rs#r1))) m
-  | Pcvtx2w rd =>
-      Next (nextinstr (rs#rd <- (Val.loword rs#rd))) m
-  | Pbtbl r tbl =>
-      match (rs#X16 <- Vundef)#r with
-      | Vint n =>
-          match list_nth_z tbl (Int.unsigned n) with
-          | None => Stuck
-          | Some lbl => goto_label f lbl (rs#X16 <- Vundef) m
-          end
-      | _ => Stuck
-      end
-  | Pcfi_rel_offset _ =>
-      Next (nextinstr rs) m
-  | Pbuiltin ef args res => Stuck    (**r treated specially below *)
-  (** The following instructions and directives are not generated directly
-      by Asmgen, so we do not model them. *)
-  | Pldp _ _ _
-  | Pstp _ _ _
-  | Pcls _ _ _
-  | Pclz _ _ _
-  | Prev _ _ _
-  | Prev16 _ _ _
-  | Prbit _ _ _
-  | Pfsqrt _ _ _
-  | Pfmadd _ _ _ _ _
-  | Pfmsub _ _ _ _ _
-  | Pfnmadd _ _ _ _ _
-  | Pfnmsub _ _ _ _ _
-  | Pfmax _ _ _ _
-  | Pfmin _ _ _ _
-  | Pnop
-  | Pincpc => Next (nextinstr rs) m
-  | Pcfi_adjust _ =>
-      Stuck
-  end.
+        | Some true => goto_label f lbl rs m
+        | Some false => Next (nextinstr rs) m
+        | None => Stuck
+        end
+    | Pbl id sg =>
+        Next (rs#RA <- (Val.offset_ptr rs#PC Ptrofs.one) #PC <- (Genv.symbol_address ge id Ptrofs.zero)) m
+    | Pbs id sg =>
+        Next (rs#PC <- (Genv.symbol_address ge id Ptrofs.zero)) m
+    | Pblr r sg =>
+        Next (rs#RA <- (Val.offset_ptr rs#PC Ptrofs.one) #PC <- (rs#r)) m
+    | Pbr r sg =>
+        Next (rs#PC <- (rs#r)) m
+    | Pret r =>
+        Next (rs#PC <- (rs#r)) m
+    | Pcbnz sz r lbl =>
+        match eval_testzero sz rs#r m with
+        | Some true => Next (nextinstr rs) m
+        | Some false => goto_label f lbl rs m
+        | None => Stuck
+        end
+    | Pcbz sz r lbl =>
+        match eval_testzero sz rs#r m with
+        | Some true => goto_label f lbl rs m
+        | Some false => Next (nextinstr rs) m
+        | None => Stuck
+        end
+    | Ptbnz sz r n lbl =>
+        match eval_testbit sz rs#r n with
+        | Some true => goto_label f lbl rs m
+        | Some false => Next (nextinstr rs) m
+        | None => Stuck
+        end
+    | Ptbz sz r n lbl =>
+        match eval_testbit sz rs#r n with
+        | Some true => Next (nextinstr rs) m
+        | Some false => goto_label f lbl rs m
+        | None => Stuck
+        end
+    (** Memory loads and stores *)
+    | Pldrw rd a =>
+        exec_load Mint32 (fun v => v) a rd rs m
+    | Pldrw_a rd a =>
+        exec_load Many32 (fun v => v) a rd rs m
+    | Pldrx rd a =>
+        exec_load Mint64 (fun v => v) a rd rs m
+    | Pldrx_a rd a =>
+        exec_load Many64 (fun v => v) a rd rs m
+    | Pldrb W rd a =>
+        exec_load Mint8unsigned (fun v => v) a rd rs m
+    | Pldrb X rd a =>
+        exec_load Mint8unsigned Val.longofintu a rd rs m
+    | Pldrsb W rd a =>
+        exec_load Mint8signed (fun v => v) a rd rs m
+    | Pldrsb X rd a =>
+        exec_load Mint8signed Val.longofint a rd rs m
+    | Pldrh W rd a =>
+        exec_load Mint16unsigned (fun v => v) a rd rs m
+    | Pldrh X rd a =>
+        exec_load Mint16unsigned Val.longofintu a rd rs m
+    | Pldrsh W rd a =>
+        exec_load Mint16signed (fun v => v) a rd rs m
+    | Pldrsh X rd a =>
+        exec_load Mint16signed Val.longofint a rd rs m
+    | Pldrzw rd a =>
+        exec_load Mint32 Val.longofintu a rd rs m
+    | Pldrsw rd a =>
+        exec_load Mint32 Val.longofint a rd rs m
+    | Pstrw r a =>
+        exec_store Mint32 a rs#r rs m
+    | Pstrw_a r a =>
+        exec_store Many32 a rs#r rs m
+    | Pstrx r a =>
+        exec_store Mint64 a rs#r rs m
+    | Pstrx_a r a =>
+        exec_store Many64 a rs#r rs m
+    | Pstrb r a =>
+        exec_store Mint8unsigned a rs#r rs m
+    | Pstrh r a =>
+        exec_store Mint16unsigned a rs#r rs m
+    (** Integer arithmetic, immediate *)
+    | Paddimm W rd r1 n =>
+        Next (nextinstr (rs#rd <- (Val.add rs#r1 (Vint (Int.repr n))))) m
+    | Paddimm X rd r1 n =>
+        Next (nextinstr (rs#rd <- (Val.addl rs#r1 (Vlong (Int64.repr n))))) m
+    | Psubimm W rd r1 n =>
+        Next (nextinstr (rs#rd <- (Val.sub rs#r1 (Vint (Int.repr n))))) m
+    | Psubimm X rd r1 n =>
+        Next (nextinstr (rs#rd <- (Val.subl rs#r1 (Vlong (Int64.repr n))))) m
+    | Pcmpimm W r1 n =>
+        Next (nextinstr (compare_int rs rs#r1 (Vint (Int.repr n)) m)) m
+    | Pcmpimm X r1 n =>
+        Next (nextinstr (compare_long rs rs#r1 (Vlong (Int64.repr n)) m)) m
+    | Pcmnimm W r1 n =>
+        Next (nextinstr (compare_int rs rs#r1 (Vint (Int.neg (Int.repr n))) m)) m
+    | Pcmnimm X r1 n =>
+        Next (nextinstr (compare_long rs rs#r1 (Vlong (Int64.neg (Int64.repr n))) m)) m
+    (** Move integer register *)
+    | Pmov rd r1 =>
+        Next ( nextinstr (rs#rd <- (rs#r1))) m
+    (** Logical, immediate *)
+    | Pandimm W rd r1 n =>
+        Next (nextinstr (rs#rd <- (Val.and rs##r1 (Vint (Int.repr n))))) m
+    | Pandimm X rd r1 n =>
+        Next (nextinstr (rs#rd <- (Val.andl rs###r1 (Vlong (Int64.repr n))))) m
+    | Peorimm W rd r1 n =>
+        Next (nextinstr (rs#rd <- (Val.xor rs##r1 (Vint (Int.repr n))))) m
+    | Peorimm X rd r1 n =>
+        Next (nextinstr (rs#rd <- (Val.xorl rs###r1 (Vlong (Int64.repr n))))) m
+    | Porrimm W rd r1 n =>
+        Next (nextinstr (rs#rd <- (Val.or rs##r1 (Vint (Int.repr n))))) m
+    | Porrimm X rd r1 n =>
+        Next (nextinstr (rs#rd <- (Val.orl rs###r1 (Vlong (Int64.repr n))))) m
+    | Ptstimm W r1 n =>
+        Next (nextinstr (compare_int rs (Val.and rs#r1 (Vint (Int.repr n))) (Vint Int.zero) m)) m
+    | Ptstimm X r1 n =>
+        Next (nextinstr (compare_long rs (Val.andl rs#r1 (Vlong (Int64.repr n))) (Vlong Int64.zero) m)) m
+    (** Move wide immediate *)
+    | Pmovz W rd n pos =>
+        Next (nextinstr (rs#rd <- (Vint (Int.repr (Z.shiftl n pos))))) m
+    | Pmovz X rd n pos =>
+        Next (nextinstr (rs#rd <- (Vlong (Int64.repr (Z.shiftl n pos))))) m
+    | Pmovn W rd n pos =>
+        Next (nextinstr (rs#rd <- (Vint (Int.repr (Z.lnot (Z.shiftl n pos)))))) m
+    | Pmovn X rd n pos =>
+        Next (nextinstr (rs#rd <- (Vlong (Int64.repr (Z.lnot (Z.shiftl n pos)))))) m
+    | Pmovk W rd n pos =>
+        Next (nextinstr (rs#rd <- (insert_in_int rs#rd n pos 16))) m
+    | Pmovk X rd n pos =>
+        Next (nextinstr (rs#rd <- (insert_in_long rs#rd n pos 16))) m
+    (** PC-relative addressing *)
+    | Padrp rd id ofs =>
+        Next (nextinstr (rs#rd <- (symbol_high ge id ofs))) m
+    | Paddadr rd r1 id ofs =>
+        Next (nextinstr (rs#rd <- (Val.addl rs#r1 (symbol_low ge id ofs)))) m
+    (** Bit-field operations *)
+    | Psbfiz W rd r1 r s =>
+        Next (nextinstr (rs#rd <- (Val.shl (Val.sign_ext s rs#r1) (Vint r)))) m
+    | Psbfiz X rd r1 r s =>
+        Next (nextinstr (rs#rd <- (Val.shll (Val.sign_ext_l s rs#r1) (Vint r)))) m
+    | Psbfx W rd r1 r s =>
+        Next (nextinstr (rs#rd <- (Val.sign_ext s (Val.shr rs#r1 (Vint r))))) m
+    | Psbfx X rd r1 r s =>
+        Next (nextinstr (rs#rd <- (Val.sign_ext_l s (Val.shrl rs#r1 (Vint r))))) m
+    | Pubfiz W rd r1 r s =>
+        Next (nextinstr (rs#rd <- (Val.shl (Val.zero_ext s rs#r1) (Vint r)))) m
+    | Pubfiz X rd r1 r s =>
+        Next (nextinstr (rs#rd <- (Val.shll (Val.zero_ext_l s rs#r1) (Vint r)))) m
+    | Pubfx W rd r1 r s =>
+        Next (nextinstr (rs#rd <- (Val.zero_ext s (Val.shru rs#r1 (Vint r))))) m
+    | Pubfx X rd r1 r s =>
+        Next (nextinstr (rs#rd <- (Val.zero_ext_l s (Val.shrlu rs#r1 (Vint r))))) m
+    (** Integer arithmetic, shifted register *)
+    | Padd W rd r1 r2 s =>
+        Next (nextinstr (rs#rd <- (Val.add rs##r1 (eval_shift_op_int rs#r2 s)))) m
+    | Padd X rd r1 r2 s =>
+        Next (nextinstr (rs#rd <- (Val.addl rs###r1 (eval_shift_op_long rs#r2 s)))) m
+    | Psub W rd r1 r2 s =>
+        Next (nextinstr (rs#rd <- (Val.sub rs##r1 (eval_shift_op_int rs#r2 s)))) m
+    | Psub X rd r1 r2 s =>
+        Next (nextinstr (rs#rd <- (Val.subl rs###r1 (eval_shift_op_long rs#r2 s)))) m
+    | Pcmp W r1 r2 s =>
+        Next (nextinstr (compare_int rs rs##r1 (eval_shift_op_int rs#r2 s) m)) m
+    | Pcmp X r1 r2 s =>
+        Next (nextinstr (compare_long rs rs###r1 (eval_shift_op_long rs#r2 s) m)) m
+    | Pcmn W r1 r2 s =>
+        Next (nextinstr (compare_int rs rs##r1 (Val.neg (eval_shift_op_int rs#r2 s)) m)) m
+    | Pcmn X r1 r2 s =>
+        Next (nextinstr (compare_long rs rs###r1 (Val.negl (eval_shift_op_long rs#r2 s)) m)) m
+    (** Integer arithmetic, extending register *)
+    | Paddext rd r1 r2 x =>
+        Next (nextinstr (rs#rd <- (Val.addl rs#r1 (eval_extend rs#r2 x)))) m
+    | Psubext rd r1 r2 x =>
+        Next (nextinstr (rs#rd <- (Val.subl rs#r1 (eval_extend rs#r2 x)))) m
+    | Pcmpext r1 r2 x =>
+        Next (nextinstr (compare_long rs rs#r1 (eval_extend rs#r2 x) m)) m
+    | Pcmnext r1 r2 x =>
+        Next (nextinstr (compare_long rs rs#r1 (Val.negl (eval_extend rs#r2 x)) m)) m
+    (** Logical, shifted register *)
+    | Pand W rd r1 r2 s =>
+        Next (nextinstr (rs#rd <- (Val.and rs##r1 (eval_shift_op_int rs#r2 s)))) m
+    | Pand X rd r1 r2 s =>
+        Next (nextinstr (rs#rd <- (Val.andl rs###r1 (eval_shift_op_long rs#r2 s)))) m
+    | Pbic W rd r1 r2 s =>
+        Next (nextinstr (rs#rd <- (Val.and rs##r1 (Val.notint (eval_shift_op_int rs#r2 s))))) m
+    | Pbic X rd r1 r2 s =>
+        Next (nextinstr (rs#rd <- (Val.andl rs###r1 (Val.notl (eval_shift_op_long rs#r2 s))))) m
+    | Peon W rd r1 r2 s =>
+        Next (nextinstr (rs#rd <- (Val.xor rs##r1 (Val.notint (eval_shift_op_int rs#r2 s))))) m
+    | Peon X rd r1 r2 s =>
+        Next (nextinstr (rs#rd <- (Val.xorl rs###r1 (Val.notl (eval_shift_op_long rs#r2 s))))) m
+    | Peor W rd r1 r2 s =>
+        Next (nextinstr (rs#rd <- (Val.xor rs##r1 (eval_shift_op_int rs#r2 s)))) m
+    | Peor X rd r1 r2 s =>
+        Next (nextinstr (rs#rd <- (Val.xorl rs###r1 (eval_shift_op_long rs#r2 s)))) m
+    | Porr W rd r1 r2 s =>
+        Next (nextinstr (rs#rd <- (Val.or rs##r1 (eval_shift_op_int rs#r2 s)))) m
+    | Porr X rd r1 r2 s =>
+        Next (nextinstr (rs#rd <- (Val.orl rs###r1 (eval_shift_op_long rs#r2 s)))) m
+    | Porn W rd r1 r2 s =>
+        Next (nextinstr (rs#rd <- (Val.or rs##r1 (Val.notint (eval_shift_op_int rs#r2 s))))) m
+    | Porn X rd r1 r2 s =>
+        Next (nextinstr (rs#rd <- (Val.orl rs###r1 (Val.notl (eval_shift_op_long rs#r2 s))))) m
+    | Ptst W r1 r2 s =>
+        Next (nextinstr (compare_int rs (Val.and rs##r1 (eval_shift_op_int rs#r2 s)) (Vint Int.zero) m)) m
+    | Ptst X r1 r2 s =>
+        Next (nextinstr (compare_long rs (Val.andl rs###r1 (eval_shift_op_long rs#r2 s)) (Vlong Int64.zero) m)) m
+    (** Variable shifts *)
+    | Pasrv W rd r1 r2 =>
+        Next (nextinstr (rs#rd <- (Val.shr rs#r1 rs#r2))) m
+    | Pasrv X rd r1 r2 =>
+        Next (nextinstr (rs#rd <- (Val.shrl rs#r1 rs#r2))) m
+    | Plslv W rd r1 r2 =>
+        Next (nextinstr (rs#rd <- (Val.shl rs#r1 rs#r2))) m
+    | Plslv X rd r1 r2 =>
+        Next (nextinstr (rs#rd <- (Val.shll rs#r1 rs#r2))) m
+    | Plsrv W rd r1 r2 =>
+        Next (nextinstr (rs#rd <- (Val.shru rs#r1 rs#r2))) m
+    | Plsrv X rd r1 r2 =>
+        Next (nextinstr (rs#rd <- (Val.shrlu rs#r1 rs#r2))) m
+    | Prorv W rd r1 r2 =>
+        Next (nextinstr (rs#rd <- (Val.ror rs#r1 rs#r2))) m
+    | Prorv X rd r1 r2 =>
+        Next (nextinstr (rs#rd <- (Val.rorl rs#r1 rs#r2))) m
+    (** Conditional data processing *)
+    | Pcsel rd r1 r2 cond =>
+        let v :=
+            match eval_testcond cond rs with
+            | Some true => rs#r1
+            | Some false => rs#r2
+            | None => Vundef
+            end in
+        Next (nextinstr (rs#rd <- v)) m
+    | Pcset rd cond =>
+        let v :=
+            match eval_testcond cond rs with
+            | Some true => Vint Int.one
+            | Some false => Vint Int.zero
+            | None => Vundef
+            end in
+        Next (nextinstr (rs#rd <- v)) m
+    (** Integer multiply/divide *)
+    | Pmadd W rd r1 r2 r3 =>
+        Next (nextinstr (rs#rd <- (Val.add rs##r3 (Val.mul rs#r1 rs#r2)))) m
+    | Pmadd X rd r1 r2 r3 =>
+        Next (nextinstr (rs#rd <- (Val.addl rs###r3 (Val.mull rs#r1 rs#r2)))) m
+    | Pmsub W rd r1 r2 r3 =>
+        Next (nextinstr (rs#rd <- (Val.sub rs##r3 (Val.mul rs#r1 rs#r2)))) m
+    | Pmsub X rd r1 r2 r3 =>
+        Next (nextinstr (rs#rd <- (Val.subl rs###r3 (Val.mull rs#r1 rs#r2)))) m
+    | Psmulh rd r1 r2 =>
+        Next (nextinstr (rs#rd <- (Val.mullhs rs#r1 rs#r2))) m
+    | Pumulh rd r1 r2 =>
+        Next (nextinstr (rs#rd <- (Val.mullhu rs#r1 rs#r2))) m
+    | Psdiv W rd r1 r2 =>
+        Next (nextinstr (rs#rd <- (Val.maketotal (Val.divs rs#r1 rs#r2)))) m
+    | Psdiv X rd r1 r2 =>
+        Next (nextinstr (rs#rd <- (Val.maketotal (Val.divls rs#r1 rs#r2)))) m
+    | Pudiv W rd r1 r2 =>
+        Next (nextinstr (rs#rd <- (Val.maketotal (Val.divu rs#r1 rs#r2)))) m
+    | Pudiv X rd r1 r2 =>
+        Next (nextinstr (rs#rd <- (Val.maketotal (Val.divlu rs#r1 rs#r2)))) m
+    (** Floating-point loads and stores *)
+    | Pldrs rd a =>
+        exec_load Mfloat32 (fun v => v) a rd rs m
+    | Pldrd rd a =>
+        exec_load Mfloat64 (fun v => v) a rd rs m
+    | Pldrd_a rd a =>
+        exec_load Many64 (fun v => v) a rd rs m
+    | Pstrs r a =>
+        exec_store Mfloat32 a rs#r rs m
+    | Pstrd r a =>
+        exec_store Mfloat64 a rs#r rs m
+    | Pstrd_a r a =>
+        exec_store Many64 a rs#r rs m
+    (** Floating-point move *)
+    | Pfmov rd r1 =>
+        Next (nextinstr (rs#rd <- (rs#r1))) m
+    | Pfmovimms rd f =>
+        Next (nextinstr (rs#X16 <- Vundef #rd <- (Vsingle f))) m
+    | Pfmovimmd rd f =>
+        Next (nextinstr (rs#X16 <- Vundef #rd <- (Vfloat f))) m
+    | Pfmovi S rd r1 =>
+        Next (nextinstr (rs#rd <- (float32_of_bits rs##r1))) m
+    | Pfmovi D rd r1 =>
+        Next (nextinstr (rs#rd <- (float64_of_bits rs###r1))) m
+    (** Floating-point conversions *)
+    | Pfcvtds rd r1 =>
+        Next (nextinstr (rs#rd <- (Val.floatofsingle rs#r1))) m
+    | Pfcvtsd rd r1 =>
+        Next (nextinstr (rs#rd <- (Val.singleoffloat rs#r1))) m
+    | Pfcvtzs W S rd r1 =>
+        Next (nextinstr (rs#rd <- (Val.maketotal (Val.intofsingle rs#r1)))) m
+    | Pfcvtzs W D rd r1 =>
+        Next (nextinstr (rs#rd <- (Val.maketotal (Val.intoffloat rs#r1)))) m
+    | Pfcvtzs X S rd r1 =>
+        Next (nextinstr (rs#rd <- (Val.maketotal (Val.longofsingle rs#r1)))) m
+    | Pfcvtzs X D rd r1 =>
+        Next (nextinstr (rs#rd <- (Val.maketotal (Val.longoffloat rs#r1)))) m
+    | Pfcvtzu W S rd r1 =>
+        Next (nextinstr (rs#rd <- (Val.maketotal (Val.intuofsingle rs#r1)))) m
+    | Pfcvtzu W D rd r1 =>
+        Next (nextinstr (rs#rd <- (Val.maketotal (Val.intuoffloat rs#r1)))) m
+    | Pfcvtzu X S rd r1 =>
+        Next (nextinstr (rs#rd <- (Val.maketotal (Val.longuofsingle rs#r1)))) m
+    | Pfcvtzu X D rd r1 =>
+        Next (nextinstr (rs#rd <- (Val.maketotal (Val.longuoffloat rs#r1)))) m
+    | Pscvtf S W rd r1 =>
+        Next (nextinstr (rs#rd <- (Val.maketotal (Val.singleofint rs#r1)))) m
+    | Pscvtf D W rd r1 =>
+        Next (nextinstr (rs#rd <- (Val.maketotal (Val.floatofint rs#r1)))) m
+    | Pscvtf S X rd r1 =>
+        Next (nextinstr (rs#rd <- (Val.maketotal (Val.singleoflong rs#r1)))) m
+    | Pscvtf D X rd r1 =>
+        Next (nextinstr (rs#rd <- (Val.maketotal (Val.floatoflong rs#r1)))) m
+    | Pucvtf S W rd r1 =>
+        Next (nextinstr (rs#rd <- (Val.maketotal (Val.singleofintu rs#r1)))) m
+    | Pucvtf D W rd r1 =>
+        Next (nextinstr (rs#rd <- (Val.maketotal (Val.floatofintu rs#r1)))) m
+    | Pucvtf S X rd r1 =>
+        Next (nextinstr (rs#rd <- (Val.maketotal (Val.singleoflongu rs#r1)))) m
+    | Pucvtf D X rd r1 =>
+        Next (nextinstr (rs#rd <- (Val.maketotal (Val.floatoflongu rs#r1)))) m
+    (** Floating-point arithmetic *)
+    | Pfabs S rd r1 =>
+        Next (nextinstr (rs#rd <- (Val.absfs rs#r1))) m
+    | Pfabs D rd r1 =>
+        Next (nextinstr (rs#rd <- (Val.absf rs#r1))) m
+    | Pfneg S rd r1 =>
+        Next (nextinstr (rs#rd <- (Val.negfs rs#r1))) m
+    | Pfneg D rd r1 =>
+        Next (nextinstr (rs#rd <- (Val.negf rs#r1))) m
+    | Pfadd S rd r1 r2 =>
+        Next (nextinstr (rs#rd <- (Val.addfs rs#r1 rs#r2))) m
+    | Pfadd D rd r1 r2 =>
+        Next (nextinstr (rs#rd <- (Val.addf rs#r1 rs#r2))) m
+    | Pfdiv S rd r1 r2 =>
+        Next (nextinstr (rs#rd <- (Val.divfs rs#r1 rs#r2))) m
+    | Pfdiv D rd r1 r2 =>
+        Next (nextinstr (rs#rd <- (Val.divf rs#r1 rs#r2))) m
+    | Pfmul S rd r1 r2 =>
+        Next (nextinstr (rs#rd <- (Val.mulfs rs#r1 rs#r2))) m
+    | Pfmul D rd r1 r2 =>
+        Next (nextinstr (rs#rd <- (Val.mulf rs#r1 rs#r2))) m
+    | Pfnmul S rd r1 r2 =>
+        Next (nextinstr (rs#rd <- (Val.negfs (Val.mulfs rs#r1 rs#r2)))) m
+    | Pfnmul D rd r1 r2 =>
+        Next (nextinstr (rs#rd <- (Val.negf (Val.mulf rs#r1 rs#r2)))) m
+    | Pfsub S rd r1 r2 =>
+        Next (nextinstr (rs#rd <- (Val.subfs rs#r1 rs#r2))) m
+    | Pfsub D rd r1 r2 =>
+        Next (nextinstr (rs#rd <- (Val.subf rs#r1 rs#r2))) m
+    (** Floating-point comparison *)
+    | Pfcmp S r1 r2 =>
+        Next (nextinstr (compare_single rs rs#r1 rs#r2)) m
+    | Pfcmp D r1 r2 =>
+        Next (nextinstr (compare_float rs rs#r1 rs#r2)) m
+    | Pfcmp0 S r1 =>
+        Next (nextinstr (compare_single rs rs#r1 (Vsingle Float32.zero))) m
+    | Pfcmp0 D r1 =>
+        Next (nextinstr (compare_float rs rs#r1 (Vfloat Float.zero))) m
+    (** Floating-point conditional select *)
+    | Pfsel rd r1 r2 cond =>
+        let v :=
+            match eval_testcond cond rs with
+            | Some true => rs#r1
+            | Some false => rs#r2
+            | None => Vundef
+            end in
+        Next (nextinstr (rs#rd <- v)) m
+    (** Pseudo-instructions *)
+    | Pallocframe sz pos =>
+        let (m1, stk) := Mem.alloc m 0 sz in
+        let sp := (Vptr stk Ptrofs.zero) in
+        match Mem.storev Mint64 m1 (Val.offset_ptr sp pos) rs#SP with
+        | None => Stuck
+        | Some m2 => Next (nextinstr (rs #X15 <- (rs#SP) #SP <- sp #X16 <- Vundef)) m2
+        end
+    | Pfreeframe sz pos =>
+        match Mem.loadv Mint64 m (Val.offset_ptr rs#SP pos) with
+        | None => Stuck
+        | Some v =>
+            match rs#SP with
+            | Vptr stk ofs =>
+                match Mem.free m stk 0 sz with
+                | None => Stuck
+                | Some m' => Next (nextinstr (rs#SP <- v #X16 <- Vundef)) m'
+                end
+            | _ => Stuck
+            end
+        end
+    | Plabel lbl =>
+        Next (nextinstr rs) m
+    | Ploadsymbol rd id =>
+        Next (nextinstr (rs#rd <- (Genv.symbol_address ge id Ptrofs.zero))) m
+    | Pcvtsw2x rd r1 =>
+        Next (nextinstr (rs#rd <- (Val.longofint rs#r1))) m
+    | Pcvtuw2x rd r1 =>
+        Next (nextinstr (rs#rd <- (Val.longofintu rs#r1))) m
+    | Pcvtx2w rd =>
+        Next (nextinstr (rs#rd <- (Val.loword rs#rd))) m
+    | Pbtbl r tbl =>
+        match (rs#X16 <- Vundef)#r with
+        | Vint n =>
+            match list_nth_z tbl (Int.unsigned n) with
+            | None => Stuck
+            | Some lbl => goto_label f lbl (rs#X16 <- Vundef) m
+            end
+        | _ => Stuck
+        end
+    | Pcfi_rel_offset _ =>
+        Next (nextinstr rs) m
+    | Pbuiltin ef args res => Stuck    (**r treated specially below *)
+    (** The following instructions and directives are not generated directly
+        by Asmgen, so we do not model them. *)
+    | Pldp _ _ _
+    | Pstp _ _ _
+    | Pcls _ _ _
+    | Pclz _ _ _
+    | Prev _ _ _
+    | Prev16 _ _ _
+    | Prbit _ _ _
+    | Pfsqrt _ _ _
+    | Pfmadd _ _ _ _ _
+    | Pfmsub _ _ _ _ _
+    | Pfnmadd _ _ _ _ _
+    | Pfnmsub _ _ _ _ _
+    | Pfmax _ _ _ _
+    | Pfmin _ _ _ _
+    | Pnop
+    | Pincpc => Next (nextinstr rs) m
+    | Pcfi_adjust _ =>
+        Stuck
+    end
+    end.
 
 (** Translation of the LTL/Linear/Mach view of machine registers
   to the AArch64 view.  Note that no LTL register maps to [X16],
@@ -1208,7 +1212,7 @@ Inductive step: state -> trace -> state -> Prop :=
       rs PC = Vptr b ofs ->
       Genv.find_funct_ptr ge b = Some (Internal f) ->
       find_instr (Ptrofs.unsigned ofs) f.(fn_code) = Some i ->
-      exec_instr f i rs m = Next rs' m' ->
+      exec_instr f i (Next rs m) = Next rs' m' ->
       step (State rs m) E0 (State rs' m')
   | exec_step_builtin:
       forall b ofs f ef args res rs m vargs t vres rs' m',
@@ -1787,28 +1791,39 @@ Qed.
   try (rewrite <- H0; apply data_res_isomorphism). unfold not; intros; discriminate H1.
 Qed.
 
-Theorem reorder: forall  g (f: function) (i1 i2: instruction)  (rs_i rs_t1 rs_t2 rs_f: regset)  (m_i m_t1 m_t2 m_f: mem), ~data_dependence i1 i2 g rs_i -> exec_instr g f i1 rs_i m_i = Next rs_t1 m_t1 -> exec_instr g f i2 rs_i m_i = Next rs_t2 m_t2 -> exec_instr g f i2 rs_t1 m_t1 = Next rs_f m_f -> exec_instr g f i1 rs_t2 m_t2 = Next rs_f m_f.
+(* Theorem reorder: forall  g (f: function) (i1 i2: instruction)  (rs_i rs_t1 rs_t2 rs_f: regset)  (m_i m_t1 m_t2 m_f: mem), ~data_dependence i1 i2 g rs_i -> exec_instr g f i1 rs_i m_i = Next rs_t1 m_t1 -> exec_instr g f i2 rs_i m_i = Next rs_t2 m_t2 -> exec_instr g f i2 rs_t1 m_t1 = Next rs_f m_f -> exec_instr g f i1 rs_t2 m_t2 = Next rs_f m_f. *)
+(* Theorem reorder: forall g (f: function) (i1 i2: instruction) (rs_i: regset) (m_i: mem), ~data_dependence i1 i2 g rs_i -> i1 = exec_instr g f i2 (exec_instr g f i1 (Next rs_i m_i)) = exec_instr g f i1 (exec_instr g f i2 (Next rs_i m_i)). *)
+
+
+Theorem reorder: forall g (f: function) arg11 arg12 arg21 arg22 (rs_i: regset) (m_i: mem), ~data_dependence (Pmov arg11 arg12) (Pmov arg21 arg22) g rs_i -> exec_instr g f (Pmov arg21 arg22)  (exec_instr g f (Pmov arg11 arg12)  (Next rs_i m_i)) = exec_instr g f (Pmov arg11 arg12)  (exec_instr g f (Pmov arg21 arg22)  (Next rs_i m_i)).
 Proof. intros. 
 (* Definition unwrapping*)
-unfold data_dependence in H. unfold data_sink, data_source in H. destruct i1. destruct i2; apply not_or_or_and in H; destruct H; destruct H3;
+unfold data_dependence in H. unfold data_sink, data_source in H. apply not_or_or_and in H; destruct H; destruct H0.
+(* unfold data_dependence in H. unfold data_sink, data_source in H. destruct i1. destruct i2; apply not_or_or_and in H; destruct H; destruct H0; *)
 (* Remove data hazards that hit the same singleton register (eg PC, CR)*)
-try (apply hazard_elimination in H4;  contradiction +  unfold not;  intros;  discriminate H5);
-try (apply hazard_elimination in H;  contradiction +  unfold not;  intros;  discriminate H5);
-try (apply hazard_elimination in H3;  contradiction +  unfold not;  intros;  discriminate H5);
+try (apply hazard_elimination in H1;  contradiction +  unfold not;  intros;  discriminate H2);
+try (apply hazard_elimination in H;  contradiction +  unfold not;  intros;  discriminate H2);
+try (apply hazard_elimination in H0;  contradiction +  unfold not;  intros;  discriminate H2);
+
+
 
 
 (* Remove data hazards that hit True - maybe WIP?*)
-try (apply hazard_elimination_identity in H; contradiction + unfold not; intros; discriminate H5);
+try (apply hazard_elimination_identity in H; contradiction + unfold not; intros; discriminate H2);
 
-try (apply hazard_elimination_identity in H3; contradiction + unfold not; intros; discriminate H5);
+try (apply hazard_elimination_identity in H0; contradiction + unfold not; intros; discriminate H2);
 
-try (apply hazard_elimination_identity in H4; contradiction + unfold not; intros; discriminate H5).
+try (apply hazard_elimination_identity in H1; contradiction + unfold not; intros; discriminate H2).
 
- unfold exec_instr in H0, H1, H2. unfold exec_instr. unfold goto_label. unfold goto_label in H0. unfold exec_load in H1, H2. 
- destruct (Mem.loadv Mint32 m_t1 (eval_addressing g a rs_t1)).  inversion H2.
+apply regs_are_different_resources in H, H0, H1.
+unfold exec_instr. apply inverse_outcome_equality. unfold nextinstr. split. Unset Printing Notations.  rewrite -> Pregmap.gso.  rewrite -> Pregmap.gso. apply Pregmap.gscsc. assumption. auto. auto. reflexivity. Qed. 
+(* 
+ unfold exec_instr. unfold goto_label. unfold exec_load.
+  destruct (rs_i PC). destruct (label_pos lbl 0 (fn_code f)).
+ destruct (Mem.loadv Mint32 m (eval_addressing g a rs)).  inversion H2.
  destruct (Mem.loadv Mint32 m_i (eval_addressing g a rs_i)). inversion H1. unfold nextinstr in H6, H8.
  destruct (label_pos lbl 0 (fn_code f)). destruct (rs_i PC); try discriminate. inversion H0. unfold nextinstr. rewrite -> H8. 
  
- destruct (rs_i # rd <- v0 PC); try discriminate. contradiction. unfold eval_addressing in H1, H2.
+ destruct (rs_i # rd <- v0 PC); try discriminate. contradiction. unfold eval_addressing in H1, H2. *)
 
 Qed.
