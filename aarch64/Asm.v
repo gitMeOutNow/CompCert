@@ -1282,14 +1282,15 @@ Proof.
   intros. eapply C; eauto.
 Qed.
 
-Lemma semantics_determinate: forall p, determinate (semantics p).
-Proof.
 Ltac Equalities :=
   match goal with
   | [ H1: ?a = ?b, H2: ?a = ?c |- _ ] =>
       rewrite H1 in H2; inv H2; Equalities
   | _ => idtac
   end.
+
+Lemma semantics_determinate: forall p, determinate (semantics p).
+Proof.
   intros; constructor; simpl; intros.
 - (* determ *)
   inv H; inv H0; Equalities.
@@ -1350,46 +1351,26 @@ Proof. intros. destruct H. rewrite H. rewrite H0. reflexivity. Qed.
 
 (* need some way of abstracting 
 for a given instruction if an argument is a data source/data sink*)
-
-(* terrible name but useful*)
-Definition my_preg_eq (r1 r2: preg): Prop :=
-    match r1, r2 with
-    | IR r1, IR r2 => r1 = r2
-    | FR r1, FR r2 => r1 = r2
-    | CR r1, CR r2 => r1 = r2
-    | SP, SP => True
-    | PC, PC => True
-    | _, _ => False
-    end.
-
-Remark mem_preg_isomorphism: forall r, my_preg_eq r r.
-Proof. intros. destruct r; reflexivity. Qed.
-
-
-
 Inductive data_resource: Type :=
     | SingleReg: preg -> data_resource
-    | SingleMemAddr: memory_chunk -> val -> data_resource
-    | NoResource: data_resource.
-
-(* TODO: figure out addressing equality*)
+    | SingleMemAddr: memory_chunk -> val -> data_resource.
 Definition data_res_eq (d1 d2: data_resource): Prop :=
     match d1, d2 with
-    | SingleReg r1, SingleReg r2 => my_preg_eq r1 r2
+    | SingleReg r1, SingleReg r2 => r1 = r2
     | SingleMemAddr c1 a1, SingleMemAddr c2 a2 => c1 = c2 /\ a1 = a2
     | _, _ => False
     end.
 
-Definition data_res_of_iregz (r: ireg0) : data_resource :=
+Definition iregz_same_resource (dr: data_resource) (r: ireg0) : Prop :=
     match r with 
-    | RR0 r => SingleReg (IR r) 
-    | XZR => NoResource
+    | RR0 r1 => data_res_eq dr (SingleReg r1) 
+    | XZR => False
     end.
     
     
-Remark data_res_isomorphism: forall r, r <> NoResource -> data_res_eq r r.
+Remark data_res_isomorphism: forall r, data_res_eq r r.
 Proof.
-    intros. destruct r. apply mem_preg_isomorphism. unfold data_res_eq. split; reflexivity. contradiction. 
+    intros. destruct r. unfold data_res_eq. reflexivity. unfold data_res_eq. split; reflexivity. 
 Qed.
 
 Lemma symb_data_eq: forall (x y: data_resource), {x=y} + {x<>y}.
@@ -1423,13 +1404,13 @@ Definition data_address_src(a: addressing) (d: data_resource) : Prop :=
 Definition data_source(i: instruction) (dr: data_resource): Prop := 
     match i with 
    (* Jump to*)
-   | Pb lbl => data_res_eq dr NoResource                                                    (**r branch *)
+   | Pb lbl => False                                                    (**r branch *)
    | Pbc c lbl  => data_res_eq dr (SingleReg (CR CZ))                                    (**r conditional branch *)
    | Pbl id sg => data_res_eq dr (SingleReg PC)                                  (**r jump to function and link *)
-   | Pbs id sg => data_res_eq dr NoResource                                   (**r jump to function *)
+   | Pbs id sg => False                              (**r jump to function *)
    | Pblr r sg  => data_res_eq dr (SingleReg PC)                                   (**r indirect jump and link *)
    | Pbr r sg   => data_res_eq dr (SingleReg PC)                                   (**r indirect jump *)
-   | Pret r => data_res_eq dr NoResource                                                   (**r return *)
+   | Pret r => False                                              (**r return *)
    | Pcbnz sz r lbl    => data_res_eq dr (SingleReg r)                      (**r branch if not zero *)
    | Pcbz sz r lbl => data_res_eq dr (SingleReg r)                         (**r branch if zero *)
    | Ptbnz sz r n lbl   => data_res_eq dr (SingleReg r)               (**r branch if bit n is not zero *)
@@ -1462,16 +1443,16 @@ Definition data_source(i: instruction) (dr: data_resource): Prop :=
    (** Move integer register *)
    | Pmov rd r1 => data_res_eq dr (SingleReg (preg_of_iregsp r1)) 
    (** Logical, immediate *)
-   | Pandimm sz rd r1 n => data_res_eq dr (data_res_of_iregz r1)                 (**r and *)
-   | Peorimm sz rd r1 n => data_res_eq dr (data_res_of_iregz r1)                  (**r xor *)
-   | Porrimm sz rd r1 n => data_res_eq dr (data_res_of_iregz r1)                  (**r or *)
+   | Pandimm sz rd r1 n => iregz_same_resource dr r1                 (**r and *)
+   | Peorimm sz rd r1 n => iregz_same_resource dr r1                  (**r xor *)
+   | Porrimm sz rd r1 n => iregz_same_resource dr r1                  (**r or *)
    | Ptstimm sz r1 n => data_res_eq dr (SingleReg r1)                             (**r and, then set flags *)
    (** Move wide immediate *)
-   | Pmovz sz rd n pos  => data_res_eq dr NoResource                     (**r move [n << pos] to [rd] *)
-   | Pmovn sz rd n pos  => data_res_eq dr NoResource                     (**r move [NOT(n << pos)] to [rd] *)
-   | Pmovk sz rd n pos  => data_res_eq dr NoResource                     (**r insert 16 bits of [n] at [pos] in rd *)
+   | Pmovz sz rd n pos  => False                (**r move [n << pos] to [rd] *)
+   | Pmovn sz rd n pos  => False                (**r move [NOT(n << pos)] to [rd] *)
+   | Pmovk sz rd n pos  => False                (**r insert 16 bits of [n] at [pos] in rd *)
    (** PC-relative addressing *)
-   | Padrp rd id ofs => data_res_eq dr NoResource                        (**r set [rd] to high address of [id + ofs] *)
+   | Padrp rd id ofs => False                   (**r set [rd] to high address of [id + ofs] *)
    | Paddadr rd r1 id ofs => data_res_eq dr (SingleReg r1)             (**r add the low address of [id + ofs] *)
    (** Bit-field operations *)
    | Psbfiz sz rd r1 r s => data_res_eq dr (SingleReg r1)           (**r sign extend and shift left *)
@@ -1479,23 +1460,23 @@ Definition data_source(i: instruction) (dr: data_resource): Prop :=
    | Pubfiz sz rd r1 r s => data_res_eq dr (SingleReg r1)           (**r zero extend and shift left *)
    | Pubfx sz rd r1 r s => data_res_eq dr (SingleReg r1)           (**r shift right and zero extend *)
    (** Integer arithmetic, shifted register *)
-   | Padd sz rd r1 r2 s => data_res_eq dr (data_res_of_iregz r1) \/ data_res_eq dr (SingleReg r2)    (**r addition *)
-   | Psub sz rd r1 r2 s => data_res_eq dr (data_res_of_iregz r1) \/ data_res_eq dr (SingleReg r2)   (**r subtraction *)
-   | Pcmp sz r1 r2 s => data_res_eq dr (data_res_of_iregz r1) \/ data_res_eq dr (SingleReg r2)              (**r compare *)
-   | Pcmn sz r1 r2 s => data_res_eq dr (data_res_of_iregz r1) \/ data_res_eq dr (SingleReg r2)              (**r compare negative *)
+   | Padd sz rd r1 r2 s => iregz_same_resource dr r1 \/ data_res_eq dr (SingleReg r2)    (**r addition *)
+   | Psub sz rd r1 r2 s => iregz_same_resource dr r1 \/ data_res_eq dr (SingleReg r2)   (**r subtraction *)
+   | Pcmp sz r1 r2 s => iregz_same_resource dr r1 \/ data_res_eq dr (SingleReg r2)              (**r compare *)
+   | Pcmn sz r1 r2 s => iregz_same_resource dr r1 \/ data_res_eq dr (SingleReg r2)              (**r compare negative *)
    (** Integer arithmetic, extending register *)
    | Paddext rd r1 r2 x => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2)        (**r int64-int32 add *)
    | Psubext rd r1 r2 x => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2)        (**r int64-int32 sub *)
    | Pcmpext r1 r2 x => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2)                     (**r int64-int32 cmp *)
    | Pcmnext r1 r2 x => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2)                       (**r int64-int32 cmn *)
    (** Logical, shifted register *)
-   | Pand sz rd r1 r2 s => data_res_eq dr (data_res_of_iregz r1) \/ data_res_eq dr (SingleReg r2)   (**r and *)
-   | Pbic sz rd r1 r2 s => data_res_eq dr (data_res_of_iregz r1) \/ data_res_eq dr (SingleReg r2)   (**r and-not *)
-   | Peon sz rd r1 r2 s => data_res_eq dr (data_res_of_iregz r1) \/ data_res_eq dr (SingleReg r2)   (**r xor-not *)
-   | Peor sz rd r1 r2 s => data_res_eq dr (data_res_of_iregz r1) \/ data_res_eq dr (SingleReg r2)   (**r xor *)
-   | Porr sz rd r1 r2 s => data_res_eq dr (data_res_of_iregz r1) \/ data_res_eq dr (SingleReg r2)   (**r or *)
-   | Porn sz rd r1 r2 s => data_res_eq dr (data_res_of_iregz r1) \/ data_res_eq dr (SingleReg r2)   (**r or-not *)
-   | Ptst sz r1 r2 s => data_res_eq dr (data_res_of_iregz r1) \/ data_res_eq dr (SingleReg r2)                (**r and, then set flags *)
+   | Pand sz rd r1 r2 s => iregz_same_resource dr r1 \/ data_res_eq dr (SingleReg r2)   (**r and *)
+   | Pbic sz rd r1 r2 s => iregz_same_resource dr r1 \/ data_res_eq dr (SingleReg r2)   (**r and-not *)
+   | Peon sz rd r1 r2 s => iregz_same_resource dr r1 \/ data_res_eq dr (SingleReg r2)   (**r xor-not *)
+   | Peor sz rd r1 r2 s => iregz_same_resource dr r1 \/ data_res_eq dr (SingleReg r2)   (**r xor *)
+   | Porr sz rd r1 r2 s => iregz_same_resource dr r1 \/ data_res_eq dr (SingleReg r2)   (**r or *)
+   | Porn sz rd r1 r2 s => iregz_same_resource dr r1 \/ data_res_eq dr (SingleReg r2)   (**r or-not *)
+   | Ptst sz r1 r2 s => iregz_same_resource dr r1 \/ data_res_eq dr (SingleReg r2)                (**r and, then set flags *)
    (** Variable shifts *)
    | Pasrv sz rd r1 r2 => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2)                         (**r arithmetic right shift *)
    | Plslv sz rd r1 r2 => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2)                         (**r left shift *)
@@ -1509,14 +1490,14 @@ Definition data_source(i: instruction) (dr: data_resource): Prop :=
    | Prbit sz rd r1  => data_res_eq dr (SingleReg r1)                                   (**r reverse bits *)
    (** Conditional data processing *)
    | Pcsel rd r1 r2 c  => data_res_eq dr (SingleReg r1)  \/ data_res_eq dr (SingleReg r2)                      (**r int conditional move *)
-    (*TODO: wtf how do I handle conditions*)
-   | Pcset rd c => data_res_eq dr NoResource                                    (**r set to 1/0 if cond is true/false *)
+    (*TODO: anything more to handle conditions?*)
+   | Pcset rd c => False                               (**r set to 1/0 if cond is true/false *)
    (*
    | Pcsetm rd c                                   (**r set to -1/0 if cond is true/false *)
    *)
    (** Integer multiply/divide *)
-   | Pmadd sz rd r1 r2 r3 =>  data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2) \/ data_res_eq dr (data_res_of_iregz r3)             (**r multiply-add *)
-   | Pmsub sz rd r1 r2 r3 => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2) \/ data_res_eq dr (data_res_of_iregz r3)            (**r multiply-sub *)
+   | Pmadd sz rd r1 r2 r3 =>  data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2) \/ iregz_same_resource dr r3              (**r multiply-add *)
+   | Pmsub sz rd r1 r2 r3 => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2) \/ iregz_same_resource dr r3            (**r multiply-sub *)
    | Psmulh rd r1 r2 => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2)                                   (**r signed multiply high *)
    | Pumulh rd r1 r2 => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2)                                   (**r unsigned multiply high *)
    | Psdiv sz rd r1 r2 => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2)                       (**r signed division *)
@@ -1530,9 +1511,9 @@ Definition data_source(i: instruction) (dr: data_resource): Prop :=
    | Pstrd_a rs a => data_res_eq dr (SingleReg rs)                                (**r store float64 as any64 *)
    (** Floating-point move *)
    | Pfmov rd r1 => data_res_eq dr (SingleReg r1) 
-   | Pfmovimms rd f  => data_res_eq dr NoResource                                (**r load float32 constant *)
-   | Pfmovimmd rd f  => data_res_eq dr NoResource                                  (**r load float64 constant *)
-   | Pfmovi fsz rd r1 => data_res_eq dr (data_res_of_iregz r1)                         (**r copy int reg to FP reg *)
+   | Pfmovimms rd f  => False                                (**r load float32 constant *)
+   | Pfmovimmd rd f  => False                                  (**r load float64 constant *)
+   | Pfmovi fsz rd r1 => iregz_same_resource dr r1                         (**r copy int reg to FP reg *)
    (** Floating-point conversions *)
    | Pfcvtds rd r1  => data_res_eq dr (SingleReg r1)                                            (**r convert float32 to float64 *)
    | Pfcvtsd rd r1  => data_res_eq dr (SingleReg r1)                                           (**r convert float64 to float32 *)
@@ -1562,18 +1543,18 @@ Definition data_source(i: instruction) (dr: data_resource): Prop :=
    (*TODO: figure out cond*)
    | Pfsel rd r1 r2 cond => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2)
    (** Pseudo-instructions *)
-   | Pallocframe sz linkofs => data_res_eq dr NoResource                              (**r allocate new stack frame *)
-   | Pfreeframe sz linkofs => data_res_eq dr NoResource                               (**r deallocate stack frame and restore previous frame *)
-   | Plabel lbl => data_res_eq dr NoResource                                                (**r define a code label *)
-   | Ploadsymbol rd id => data_res_eq dr NoResource                                 (**r load the address of [id] *)
+   | Pallocframe sz linkofs => False                              (**r allocate new stack frame *)
+   | Pfreeframe sz linkofs => False                               (**r deallocate stack frame and restore previous frame *)
+   | Plabel lbl => False                                                (**r define a code label *)
+   | Ploadsymbol rd id => False                                 (**r load the address of [id] *)
    | Pcvtsw2x rd r1 => data_res_eq dr (SingleReg r1)                                 (**r sign-extend 32-bit int to 64-bit *)
    | Pcvtuw2x rd r1 => data_res_eq dr (SingleReg r1)                                  (**r zero-extend 32-bit int to 64-bit *)
    | Pcvtx2w rd => data_res_eq dr (SingleReg rd)                                                 (**r retype a 64-bit int as a 32-bit int *)
-   | Pbtbl r1 tbl  => data_res_eq dr NoResource                              (**r N-way branch through a jump table *)
-   | Pbuiltin ef args res => data_res_eq dr NoResource   (**r built-in function (pseudo) *)
-   | Pnop => data_res_eq dr NoResource                                                             (**r no operation *)
-   | Pcfi_adjust ofs => data_res_eq dr NoResource                                           (**r .cfi_adjust debug directive *)
-   | Pcfi_rel_offset ofs  => data_res_eq dr NoResource                                       (**r .cfi_rel_offset debug directive *)
+   | Pbtbl r1 tbl  => False                              (**r N-way branch through a jump table *)
+   | Pbuiltin ef args res => False   (**r built-in function (pseudo) *)
+   | Pnop => False                                                             (**r no operation *)
+   | Pcfi_adjust ofs => False                                           (**r .cfi_adjust debug directive *)
+   | Pcfi_rel_offset ofs  => False                                       (**r .cfi_rel_offset debug directive *)
    | Pincpc => data_res_eq dr (SingleReg PC) 
     end.
 
@@ -1719,18 +1700,18 @@ Definition data_sink(i: instruction) (dr: data_resource) (g: genv) (ers: regset)
     (** Floating-point conditional select *)
     | Pfsel rd r1 r2 cond => data_res_eq dr (SingleReg rd) 
     (** Pseudo-instructions *)
-    | Pallocframe sz linkofs => data_res_eq dr NoResource                              (**r allocate new stack frame *)
-    | Pfreeframe sz linkofs => data_res_eq dr NoResource                               (**r deallocate stack frame and restore previous frame *)
-    | Plabel lbl => data_res_eq dr NoResource                                                (**r define a code label *)
+    | Pallocframe sz linkofs => False                            (**r allocate new stack frame *)
+    | Pfreeframe sz linkofs => False                             (**r deallocate stack frame and restore previous frame *)
+    | Plabel lbl => False                                              (**r define a code label *)
     | Ploadsymbol rd id => data_res_eq dr (SingleReg rd)                                (**r load the address of [id] *)
     | Pcvtsw2x rd r1 => data_res_eq dr (SingleReg rd)                                    (**r sign-extend 32-bit int to 64-bit *)
     | Pcvtuw2x rd r1 => data_res_eq dr (SingleReg rd)                                    (**r zero-extend 32-bit int to 64-bit *)
     | Pcvtx2w rd => data_res_eq dr (SingleReg rd)                                                 (**r retype a 64-bit int as a 32-bit int *)
-    | Pbtbl r1 tbl  => data_res_eq dr NoResource                              (**r N-way branch through a jump table *)
-    | Pbuiltin ef args res => data_res_eq dr NoResource   (**r built-in function (pseudo) *)
-    | Pnop => data_res_eq dr NoResource                                                             (**r no operation *)
-    | Pcfi_adjust ofs => data_res_eq dr NoResource                                           (**r .cfi_adjust debug directive *)
-    | Pcfi_rel_offset ofs  => data_res_eq dr NoResource                                       (**r .cfi_rel_offset debug directive *)
+    | Pbtbl r1 tbl  => False                            (**r N-way branch through a jump table *)
+    | Pbuiltin ef args res => False (**r built-in function (pseudo) *)
+    | Pnop => False                                                           (**r no operation *)
+    | Pcfi_adjust ofs => False                                         (**r .cfi_adjust debug directive *)
+    | Pcfi_rel_offset ofs  => False                                     (**r .cfi_rel_offset debug directive *)
     | Pincpc => data_res_eq dr (SingleReg PC) 
 end.
 
@@ -1755,50 +1736,136 @@ Proof.
   - intro HC. apply H. right. right. assumption.
 Qed.
 
-Lemma hazard_elimination_identity: forall r1, ~(exists r2: data_resource, data_res_eq r2 r1 /\ True) -> r1 <> NoResource -> False.
-Proof. intros. apply H. exists r1. split. apply data_res_isomorphism. apply H0. reflexivity. Qed.
+Lemma hazard_elimination_identity: forall r1, ~(exists r2: data_resource, data_res_eq r2 r1 /\ True)  -> False.
+Proof. intros. apply H. exists r1. split. apply data_res_isomorphism. reflexivity. Qed.
 
-Lemma hazard_elimination: forall (d: data_resource), ~ (exists r : data_resource, data_res_eq r (d) /\ data_res_eq r (d)) -> d <> NoResource -> False.
-Proof. intros. apply H. exists d. split; apply data_res_isomorphism; apply H0. 
+Lemma hazard_elimination: forall (d: data_resource), ~ (exists r : data_resource, data_res_eq r (d) /\ data_res_eq r (d)) -> False.
+Proof. intros. apply H. exists d. split; apply data_res_isomorphism. 
 Qed.
-
-(* Remark wtf_left: forall P Q, ~((exists _ : preg, True /\ True) \/ P \/ Q) -> False.
-Proof.
-    unfold not.
-    intros. apply H. left. exists PC. split; reflexivity.
-Qed.
-
-Remark wtf_mid: forall P Q, ~(P \/ (exists _ : preg, True /\ True) \/ Q) -> False.
-Proof.
-    unfold not.
-    intros. apply H. right. left. exists PC. split; reflexivity.
-Qed.
-
-
-Remark wtf_right: forall P Q, ~( P \/ Q \/ (exists _ : preg, True /\ True)) -> False.
-Proof.
-    unfold not.
-    intros. apply H. right. right. exists PC. split; reflexivity.
-Qed.
- *)
 
 
  Remark regs_are_different_resources: forall r1 r2, ~
  (exists r : data_resource, data_res_eq r (SingleReg r1) /\ data_res_eq r (SingleReg r2)) -> r1 <> r2.
  Proof.
  unfold not. intros. apply H. exists (SingleReg r1). 
- split. try apply data_res_isomorphism.  unfold not; intros; discriminate H1.
-  try (rewrite <- H0; apply data_res_isomorphism). unfold not; intros; discriminate H1.
+ split. try apply data_res_isomorphism. 
+rewrite <- H0; apply data_res_isomorphism.
 Qed.
+
+Remark resources_are_different_resources: forall r1 r2,  ~
+ (exists r : data_resource, data_res_eq r r1 /\ data_res_eq r r2) ->  r1 <> r2.
+ Proof.
+ unfold not. intros. apply H. exists r1. 
+ split. try apply data_res_isomorphism. auto. 
+  try (rewrite <- H0; apply data_res_isomorphism).
+Qed.
+
+Remark VInt_eq: forall i1 i2, Vint i1 = Vint i2 -> i1 = i2.
+Proof. intros. inv H. reflexivity. Qed.
 
 (* Theorem reorder: forall  g (f: function) (i1 i2: instruction)  (rs_i rs_t1 rs_t2 rs_f: regset)  (m_i m_t1 m_t2 m_f: mem), ~data_dependence i1 i2 g rs_i -> exec_instr g f i1 rs_i m_i = Next rs_t1 m_t1 -> exec_instr g f i2 rs_i m_i = Next rs_t2 m_t2 -> exec_instr g f i2 rs_t1 m_t1 = Next rs_f m_f -> exec_instr g f i1 rs_t2 m_t2 = Next rs_f m_f. *)
 (* Theorem reorder: forall g (f: function) (i1 i2: instruction) (rs_i: regset) (m_i: mem), ~data_dependence i1 i2 g rs_i -> i1 = exec_instr g f i2 (exec_instr g f i1 (Next rs_i m_i)) = exec_instr g f i1 (exec_instr g f i2 (Next rs_i m_i)). *)
 
 
-Theorem reorder: forall g (f: function) arg11 arg12 arg21 arg22 (rs_i: regset) (m_i: mem), ~data_dependence (Pmov arg11 arg12) (Pmov arg21 arg22) g rs_i -> exec_instr g f (Pmov arg21 arg22)  (exec_instr g f (Pmov arg11 arg12)  (Next rs_i m_i)) = exec_instr g f (Pmov arg11 arg12)  (exec_instr g f (Pmov arg21 arg22)  (Next rs_i m_i)).
+(** ** Simplify matches when possible *)
+
+Ltac simpl_match :=
+  let repl_match_goal d d' :=
+      replace d with d';
+      lazymatch goal with
+      | [ |- context[match d' with _ => _ end] ] => fail
+      | _ => idtac
+      end in
+  let repl_match_hyp H d d' :=
+      replace d with d' in H;
+      lazymatch type of H with
+      | context[match d' with _ => _ end] => fail
+      | _ => idtac
+      end in
+  match goal with
+  | [ Heq: ?d = ?d' |- context[match ?d with _ => _ end] ] =>
+    repl_match_goal d d'
+  | [ Heq: ?d' = ?d |- context[match ?d with _ => _ end] ] =>
+    repl_match_goal d d'
+  | [ Heq: ?d = ?d', H: context[match ?d with _ => _ end] |- _ ] =>
+    repl_match_hyp H d d'
+  | [ Heq: ?d' = ?d, H: context[match ?d with _ => _ end] |- _ ] =>
+    repl_match_hyp H d d'
+  end.
+
+(** ** Find and destruct matches *)
+
+Ltac destruct_matches_in e :=
+  lazymatch e with
+  | context[match ?d with | _ => _ end] =>
+    destruct_matches_in d
+  | _ => destruct e eqn:?; intros
+  end.
+
+Ltac destruct_all_matches :=
+  repeat (try simpl_match;
+          try match goal with
+              | [ |- context[match ?d with | _ => _ end] ] =>
+                destruct_matches_in d
+              | [ H: context[match ?d with | _ => _ end] |- _ ] =>
+                destruct_matches_in d
+              end);
+  subst;
+  try congruence;
+  auto.
+
+Ltac destruct_nongoal_matches :=
+  repeat (try simpl_match;
+           try match goal with
+           | [ H: context[match ?d with | _ => _ end] |- _ ] =>
+             destruct_matches_in d
+               end);
+  subst;
+  try congruence;
+  auto.
+
+Ltac destruct_goal_matches :=
+  repeat (try simpl_match;
+           match goal with
+           | [ |- context[match ?d with | _ => _ end] ] =>
+              destruct_matches_in d
+           end);
+  try congruence;
+  auto.
+
+Ltac destruct_tuple :=
+  match goal with
+  | [ H: context[let '(a, b) := ?p in _] |- _ ] =>
+    let a := fresh a in
+    let b := fresh b in
+    destruct p as [a b]
+  | [ |- context[let '(a, b) := ?p in _] ] =>
+    let a := fresh a in
+    let b := fresh b in
+    destruct p as [a b]
+  end.
+
+Tactic Notation "destruct" "matches" "in" "*" := destruct_all_matches.
+Tactic Notation "destruct" "matches" "in" "*|-" := destruct_nongoal_matches.
+Tactic Notation "destruct" "matches" := destruct_goal_matches.
+
+Ltac Super_Equalities :=
+  match goal with
+  | [ H_gso: ?a # ?b <- (?a ?c) ?d = ?e |- _ ] =>
+    rewrite -> Pregmap.gso in H_gso; Equalities
+  | [ H1: Vint ?a = Vint ?b, H2: Vint ?a = Vint ?c |- _ ] =>
+    rewrite H1 in H2; apply VInt_eq; Equalities
+  | [ H1: ?a = ?b, H2: ?a = ?c |- _ ] =>
+      rewrite H1 in H2; inv H2; Equalities
+  | [ H_destroy: ?a = ?b |- _] => subst a; Equalities
+  | _ => idtac
+  end.
+
+
+Theorem reorder: forall g (f: function) arg11 arg12 (i2: instruction) (rs_i: regset) (m_i: mem), ~data_dependence (Pmov arg11 arg12) i2 g rs_i -> exec_instr g f i2  (exec_instr g f (Pmov arg11 arg12)  (Next rs_i m_i)) = exec_instr g f (Pmov arg11 arg12)  (exec_instr g f i2  (Next rs_i m_i)).
 Proof. intros. 
 (* Definition unwrapping*)
-unfold data_dependence in H. unfold data_sink, data_source in H. apply not_or_or_and in H; destruct H; destruct H0.
+unfold data_dependence in H. unfold data_sink, data_source in H. apply not_or_or_and in H; destruct H; destruct H0. destruct i2.
 (* unfold data_dependence in H. unfold data_sink, data_source in H. destruct i1. destruct i2; apply not_or_or_and in H; destruct H; destruct H0; *)
 (* Remove data hazards that hit the same singleton register (eg PC, CR)*)
 try (apply hazard_elimination in H1;  contradiction +  unfold not;  intros;  discriminate H2);
@@ -1807,16 +1874,63 @@ try (apply hazard_elimination in H0;  contradiction +  unfold not;  intros;  dis
 
 
 
-
 (* Remove data hazards that hit True - maybe WIP?*)
 try (apply hazard_elimination_identity in H; contradiction + unfold not; intros; discriminate H2);
 
 try (apply hazard_elimination_identity in H0; contradiction + unfold not; intros; discriminate H2);
 
-try (apply hazard_elimination_identity in H1; contradiction + unfold not; intros; discriminate H2).
+try (apply hazard_elimination_identity in H1; contradiction + unfold not; intros; discriminate H2); auto;
+
+auto;
+
+(*Prove data vals different*)
+(* apply regs_are_different_resources in H1 || clear H1; apply regs_are_different_resources in H0 || clear H0; apply regs_are_different_resources in H || clear H; *)
+try apply regs_are_different_resources; try apply regs_are_different_resources in H0; try apply regs_are_different_resources in H;  
+unfold exec_instr; unfold nextinstr; unfold goto_label; unfold eval_testcond; destruct matches; auto; 
+(* Changing the order will not change the end result (Stuck/Next)*)
+Super_Equalities; auto.
+
+(* 
+(*breakdown mov*)
+
+
+(* Expression should be in the form Next ... = Next...*)
+-apply inverse_outcome_equality; split. rewrite -> Pregmap.gso. rewrite -> Heqv in Heqv0. inversion Heqv0. apply Pregmap.gscsc. auto. auto. auto.
+- rewrite -> Pregmap.gso in Heqv0. rewrite -> Heqv0 in Heqv2. discriminate. assumption.
+
+
+(* 
+try (rewrite -> Pregmap.gso in Heqv; rewrite -> Heqv in Heqv0; try discriminate + assumption). Qed.
+
+
+(*breakdown goto*)
+unfold goto_label. destruct matches; rewrite -> Pregmap.gso in Heqv; try rewrite -> Heqv in Heqv0; try discriminate;
+try apply regs_are_different_resources in H1; try apply regs_are_different_resources in H0; try apply regs_are_different_resources in H; auto.
+
+apply inverse_outcome_equality. split. rewrite -> Pregmap.gso. inversion Heqv0. rewrite <- H3. apply Pregmap.gscsc. assumption. auto. reflexivity. 
+
+
+
+contradiction.
+destruct (label_pos lbl 0 (fn_code f)); try reflexivity.  try rewrite -> Pregmap.gso; try destruct (rs_i PC); try reflexivity; try (apply inverse_outcome_equality; rewrite -> Pregmap.gso; try split; try apply Pregmap.gscsc);
+
+
+(*breakdown testcond*)
+unfold eval_testcond.  destruct c;  try rewrite -> Pregmap.gso.
+
+
+(*breakdown exec_add*)
+
+(*breakdown exec_load*)
+
+
+auto.  try apply regs_are_different_resources in H1. apply regs_are_different_resources in H0. auto.
+inversion H0. unfold nextinstr. rewrite H2. reflexivity.
+unfold nextinstr. split. Unset Printing Notations.  rewrite -> Pregmap.gso.  rewrite -> Pregmap.gso. apply Pregmap.gscsc. assumption. auto. auto. reflexivity. Qed.
 
 apply regs_are_different_resources in H, H0, H1.
-unfold exec_instr. apply inverse_outcome_equality. unfold nextinstr. split. Unset Printing Notations.  rewrite -> Pregmap.gso.  rewrite -> Pregmap.gso. apply Pregmap.gscsc. assumption. auto. auto. reflexivity. Qed. 
+(*solves Pmov*)
+unfold exec_instr. apply inverse_outcome_equality. unfold nextinstr. split. Unset Printing Notations.  rewrite -> Pregmap.gso.  rewrite -> Pregmap.gso. apply Pregmap.gscsc. assumption. auto. auto. reflexivity. Qed.  *)
 (* 
  unfold exec_instr. unfold goto_label. unfold exec_load.
   destruct (rs_i PC). destruct (label_pos lbl 0 (fn_code f)).
