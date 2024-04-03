@@ -519,7 +519,7 @@ Definition eval_memsim_instr (f: function) (i: instruction) (ars: allregsets) (m
     | Porrimm W rd r1 n pid =>
         MemSimNext ((ars@ (pid, rd)  <- (Val.or (ars@@ pid @@> r1) (Vint (Int.repr n))))) m
     | Porrimm X rd r1 n pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.orl (ars@@ pid @@> r1) (Vlong (Int64.repr n))))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.orl (ars@@@ pid @@@> r1) (Vlong (Int64.repr n))))) m
     | Ptstimm W r1 n pid =>
         MemSimNext (compare_int ars (Val.and ars@ (pid, r1)  (Vint (Int.repr n))) (Vint Int.zero) m pid) m
     | Ptstimm X r1 n pid =>
@@ -979,7 +979,7 @@ Definition asm_to_memsim (asm_i: Asm.instruction) (pid: processor_id): list inst
     | Asm.Pcvtsw2x rd r1 => [Pcvtsw2x rd r1 pid; Pincpc pid]
     | Asm.Pcvtuw2x rd r1 => [Pcvtuw2x rd r1 pid; Pincpc pid]
     | Asm.Pcvtx2w rd => [Pcvtx2w rd pid; Pincpc pid]
-    | Asm.Pbtbl r1 tbl => [Pbtbl r1 tbl pid; Pincpc pid]
+    | Asm.Pbtbl r1 tbl => [Pbtbl r1 tbl pid]
     | Asm.Pbuiltin ef args res => [Pbuiltin ef args res pid; Pincpc pid]
     | Asm.Pnop => [Pnop pid; Pincpc pid]                                              (**r no operation *)
     | Asm.Pcfi_adjust ofs => [Pcfi_adjust ofs pid; Pincpc pid]
@@ -1145,87 +1145,20 @@ Definition end_state_equals_asm_memsim (r: preg)(asm_o: Asm.outcome) (memsim_o: 
     | _, _ => False
     end.
 
-(* Ltac sem_eq_solver :=
-    match goal with
-    | [ H : regs_identical ?ars ?pid ?rs
-        |- Pregmap.set ?write_reg _ ?rs ?read_reg = PRmap.set (?pid, ?write_reg) _ ?ars (?pid, ?read_reg)
-    ] => apply set_method_sem_eq_form3; [ apply H | unfold regs_identical in H; specialize (H write_reg) as H_store_eq; sem_eq_solver]
-    | [H1 : ?rs ?reg = Vptr ?b1 ?i1, H2: ?ars (?pid, ?reg) = Vptr ?b2 ?i2, H_store_eq: ?rs ?reg = ?ars (?pid, ?reg) 
-        |- Vptr ?b1 ?z = Vptr ?b2 ?z] => rewrite -> H_store_eq in H1; rewrite -> H2 in H1; inversion H1; reflexivity
-    | [H_store_eq: ?rs ?reg = ?ars (?pid, ?reg) 
-        |- ?a (?rs ?reg) ?c = ?a (?ars (?pid, ?reg)) ?c] => rewrite -> H_store_eq; reflexivity
-    end. *)
-
 Remark cancel_dual_ptr_increments: forall (rs: regset) (ars: allregsets) (pid: processor_id) (v: ptrofs)(r: preg),
    rs # r = ars @ (pid, r) -> Val.offset_ptr (rs r) v = Val.offset_ptr (ars (pid, r)) v.
    Proof.
    intros. rewrite <- H. reflexivity.
    Qed.
 
-Remark eq_implies_set_eq: forall  (rs: regset) (ars: allregsets) (pid: processor_id) (write_reg read_reg: preg) (v1 v2: val),
-    rs read_reg = ars (pid, read_reg) -> v1 = v2 -> (rs # write_reg <- v1) read_reg = (ars @ (pid, write_reg) <- v2) (pid, read_reg).
-    Proof. intros. rewrite <- H0. unfold Asm.Pregmap.set. unfold PRmap.set. rewrite H. destruct (PregEq.eq read_reg write_reg); destruct (PREq.eq (pid, read_reg)(pid, write_reg)).
-      reflexivity. destruct n. rewrite <- e. reflexivity. destruct n. inversion e. reflexivity. reflexivity.
+
+Remark id_writes_preserve_id_regs:
+    forall (rs: regset) (ars: allregsets) (pid: processor_id) (r1 r2: preg) (v: val),
+    regs_identical ars pid rs -> regs_identical (ars @ (pid, r1) <- v) pid (rs # r1 <- v).
+    Proof.
+    intros. unfold regs_identical. unfold regs_identical in H. intro. unfold Asm.Pregmap.set. unfold PRmap.set.  destruct PREq.eq; destruct PregEq.eq. reflexivity. destruct n. inversion e. reflexivity. destruct n. inversion e. reflexivity. 
+    apply H.
 Qed.
-
-Remark invert_shll: forall (rs: regset) (v1 v2: val) (r: preg) (pid: processor_id) (ars: allregsets),
-    (rs r) = (ars (pid, r)) -> v1 = v2 -> Val.shll (rs r) v1 = Val.shll (ars (pid, r)) v2.
-    Proof. intros. rewrite H. rewrite H0. reflexivity. Qed. 
-
-Remark long_of_int: forall (v1 v2: val),
-    v1 = v2 -> Val.longofintu v1 = Val.longofintu v2.
-    Proof. intros. rewrite H. reflexivity. Qed. 
-
-(* Ltac sem_eq_solver := 
-    match goal with
-    | [ |- ?x = ?x ] => reflexivity (*Terminal*)
-    | [H: regs_identical ?ars ?pid ?rs |- regs_identical ?ars ?pid ?rs] => apply H (*Terminal*)
-    | [Hri: forall r: PregEq.t, ?rs r = ?ars (?pid, r)    |- ?rs ?r = ?ars (?pid, ?r) ] => apply Hri (*Terminal*)
-    | [H1 : ?rs ?reg = Vptr ?b1 ?i1, H2: ?ars (?pid, ?reg) = Vptr ?b2 ?i2, Hri: forall r: PregEq.t, ?rs r = ?ars (?pid, r) 
-        |- Vptr ?b1 ?z = Vptr ?b2 ?z] => specialize (Hri reg); rewrite -> Hri in H1; rewrite -> H2 in H1; inversion H1; reflexivity  (*Terminal*)
-    | [ |- Val.offset_ptr _ ?v = Val.offset_ptr _ ?v] => apply cancel_dual_ptr_increments; sem_eq_solver
-    | [ |- regs_identical _ _ _] => unfold regs_identical; intro; sem_eq_solver
-    | [ |- Pregmap.set ?r1 _ ?rs ?r2 = PRmap.set (?pid, ?r1) _ ?ars (?pid, ?r2)] => apply eq_implies_set_eq; sem_eq_solver
-    | [ H: forall r: PregEq.t, ?rs r = ?ars (?pid, r),
-    Ha1: Val.addl (?rs ?r1) _ = Vptr ?b1 ?i1, 
-    Ha2: Val.addl (?ars (?pid, ?r1)) _ = Vptr ?b2 ?i2
-    |- ?v1 = ?v2] => pose proof H as Hdup; specialize (Hdup r1); rewrite <- Hdup in Ha2; sem_eq_solver
-    | [ H: forall r: PregEq.t, ?rs r = ?ars (?pid, r),
-    Ha1: Val.addl _ (?rs ?r1) = Vptr ?b1 ?i1, 
-    Ha2: Val.addl _ (?ars (?pid, ?r1)) = Vptr ?b2 ?i2
-    |- ?v1 = ?v2] => pose proof H as Hdupdup; specialize (Hdupdup r1); rewrite <- Hdupdup in Ha2; sem_eq_solver
-    | [ Ha1: ?op ?e1 ?e2 = Vptr ?b1 ?i1, 
-        Ha2: ?op ?e1 ?e2 = Vptr ?b2 ?i2,
-        Ha3: _ _ ?m ?b1 (Ptrofs.unsigned ?i1) = Some ?v1,
-        Ha4:  _ _ ?m ?b2 (Ptrofs.unsigned ?i2) = Some ?v2
-    |- ?v1 = ?v2] => rewrite -> Ha1 in Ha2; inversion Ha2; subst; rewrite -> Ha3 in Ha4; inversion Ha4; reflexivity (*Terminal*)
-    | [ |- Val.shll _ ?v1 = Val.shll _ ?v2] => apply invert_shll; sem_eq_solver
-    | _ => idtac
-    end. *)
-
-(* Ltac sem_eq_solver := 
-    match goal with
-    | [ |- ?x = ?x ] => reflexivity (*Terminal*)
-    | [H: regs_identical ?ars ?pid ?rs |- regs_identical ?ars ?pid ?rs] => apply H (*Terminal*)
-    | [Hri: forall r: PregEq.t, ?rs r = ?ars (?pid, r)    |- ?rs ?r = ?ars (?pid, ?r) ] => apply Hri (*Terminal*)
-    | [H1 : ?rs ?reg = Vptr ?b1 ?i1, H2: ?ars (?pid, ?reg) = Vptr ?b2 ?i2, Hri: forall r: PregEq.t, ?rs r = ?ars (?pid, r) 
-        |- Vptr ?b1 ?z = Vptr ?b2 ?z] => specialize (Hri reg); rewrite -> Hri in H1; rewrite -> H2 in H1; inversion H1; reflexivity  (*Terminal*)
-    | [ |- Val.offset_ptr _ ?v = Val.offset_ptr _ ?v] => apply cancel_dual_ptr_increments; sem_eq_solver
-    | [ |- regs_identical _ _ _] => unfold regs_identical; intro; sem_eq_solver
-    | [ |- Pregmap.set ?r1 _ ?rs ?r2 = PRmap.set (?pid, ?r1) _ ?ars (?pid, ?r2)] => apply eq_implies_set_eq; sem_eq_solver
-    | [ Ha1: ?op ?e1 ?e2 = Vptr ?b1 ?i1, 
-        Ha2: ?op ?e1 ?e2 = Vptr ?b2 ?i2,
-        Ha3: _ _ ?m ?b1 (Ptrofs.unsigned ?i1) = Some ?v1,
-        Ha4:  _ _ ?m ?b2 (Ptrofs.unsigned ?i2) = Some ?v2
-    |- ?v1 = ?v2] => rewrite -> Ha1 in Ha2; inversion Ha2; subst; rewrite -> Ha3 in Ha4; inversion Ha4; reflexivity (*Terminal*)
-    | [ Ha1: ?op ?e1 ?e2 = Vptr ?b1 ?i1, 
-    Ha2: ?op ?e1 ?e2 = Vptr ?b2 ?i2,
-    Ha3: _ _ ?m ?b1 (Ptrofs.unsigned ?i1) = Some ?v1,
-    Ha4:  _ _ ?m ?b2 (Ptrofs.unsigned ?i2) = Some ?v2
-    |- _ ?v1 = _ ?v2] => rewrite -> Ha1 in Ha2; inversion Ha2; subst; rewrite -> Ha3 in Ha4; inversion Ha4; reflexivity (*Terminal*)
-    | [ |- Val.shll _ ?v1 = Val.shll _ ?v2] => apply invert_shll; sem_eq_solver
-    | _ => idtac
-    end. *)
 
 Remark set_sem_eq : 
     forall (rs: regset) (ars: allregsets) (pid: processor_id) (r read_reg: preg) (v: val),
@@ -1234,6 +1167,7 @@ Remark set_sem_eq :
     destruct n. rewrite e. reflexivity. destruct n. inversion e. reflexivity.
     apply H. 
     Qed.
+
 
 Ltac sem_eq_solver :=
     match goal with
@@ -1252,8 +1186,8 @@ Ltac sem_eq_solver :=
     | [ |- Pregmap.set ?r ?v ?rs ?r2 = PRmap.set (?pid, ?r) ?v ?ars (?pid, ?r2)] => apply set_sem_eq; sem_eq_solver (*Nonterminal*)
     (*Replace like hypotheses*)
     | [H1: ?x = ?y, H2: ?x = ?z |- _ ] => rewrite H1 in H2; sem_eq_solver (*Nonterminal*)
-    (*Break apart optional*)
-    | [H: Some ?v = Some ?v2 |- _] => inversion H; clear H; subst; sem_eq_solver (*Nonterminal*) 
+    (*Break apart constructions*)
+    | [H: ?singleton_op ?v = ?singleton_op ?v2 |- _] => inversion H; clear H; subst; sem_eq_solver (*Nonterminal*) 
     (*Pointer inversion*)
     | [H1: ?x = Vptr ?b1 ?i1,
        H2: ?x = Vptr ?b2 ?i2
@@ -1261,14 +1195,38 @@ Ltac sem_eq_solver :=
     (*Pointer inversion*)
     | [H1: Vptr ?b1 ?i1 = Vptr ?b2 ?i2 |- _] => inversion H1; clear H1; subst; sem_eq_solver (*Nonterminal*)
     | [ |- Val.offset_ptr ?v1 ?n = Val.offset_ptr ?v2 ?n] => apply cancel_dual_ptr_increments; sem_eq_solver (*Nonterminal*)
+    | (*Break apart subgoal*)
+    [ |- regs_identical ?ars ?r ?rs ] => unfold regs_identical; intro; sem_eq_solver (*Nonterminal*)
     | _ => idtac
     end.
 
+
+Ltac temp_solver := 
+    match goal with
+    | [H1: Pregmap.set ?r1 ?v ?rs ?r2 = ?e1,
+        H2: PRmap.set (?pid, ?r1) ?v ?ars (?pid, ?r2) = ?e2,
+        ri: regs_identical ?ars ?pid ?rs 
+        |- False] => assert (Hri: regs_identical (ars @ (pid, r1) <- v) pid (rs # r1 <- v)); try apply id_writes_preserve_id_regs; auto; try apply ri;
+        specialize (Hri r2); rewrite <- Hri in H2; rewrite -> H2 in H1; inversion H1
+    end.
 Theorem asm_identical_to_forward_sim: forall (pr: preg) (g: genv)(f: function) (i: Asm.instruction) (rs: regset) (ars: allregsets) (m: mem) (pid: processor_id), 
     regs_identical ars pid rs -> end_state_equals_asm_memsim pr (exec_instr g f i rs  m)  (eval_memsim_chain g f (asm_to_memsim i pid) ars m) pid.
 Proof.
-intros. pose proof H as ri. unfold regs_identical in H.  unfold end_state_equals_asm_memsim. destruct i; simpl; try unfold Asm.goto_label; try unfold goto_label; try unfold Asm.eval_testcond; try unfold eval_testcond; try unfold Asm.exec_load; try unfold exec_load; try unfold Asm.exec_store; try unfold exec_store; try unfold Mem.loadv; try unfold eval_addressing; try unfold Asm.eval_addressing; unfold Asm.compare_long; unfold compare_long; unfold Asm.compare_int; unfold compare_int; unfold Asm.ir0w; unfold ir0w; unfold Asm.ir0x; unfold ir0x; destruct matches; try split; try unfold nextinstr; try apply set_method_sem_eq_form3; try unfold regs_identical; try intro; sem_eq_solver.
-Unset Printing Notations.
+intros. pose proof H as ri. unfold regs_identical in H.  unfold end_state_equals_asm_memsim. remember i as orig_i eqn:H_orig_i. rewrite -> H_orig_i. destruct i; simpl; try unfold Asm.goto_label; try unfold goto_label; try unfold Asm.eval_testcond; try unfold eval_testcond; try unfold Asm.exec_load; try unfold exec_load; try unfold Asm.exec_store; try unfold exec_store; try unfold Mem.loadv; try unfold eval_addressing; try unfold Asm.eval_addressing; unfold Asm.compare_long; unfold compare_long; unfold Asm.compare_int; unfold compare_int; unfold Asm.ir0w; unfold ir0w; unfold Asm.ir0x; unfold ir0x; unfold Asm.compare_single; unfold compare_single; unfold Asm.compare_float; unfold compare_float;destruct matches; try split; try unfold nextinstr; try apply set_method_sem_eq_form3; sem_eq_solver.
+
+Focus 13. assert (regs_identical (ars @ (pid, X16) <- Vundef) pid (rs # X16 <- Vundef)). apply id_writes_preserve_id_regs. auto. apply ri.
+pose proof H0 as Hdup. specialize (H0 r1). rewrite <- H0 in Heqv1. rewrite -> Heqv1 in Heqv. inversion Heqv. subst.
+rewrite Heqo1 in Heqo. inversion Heqo. subst. rewrite Heqo2 in Heqo0. inversion Heqo0.  subst.
+specialize (Hdup PC). rewrite <- Hdup in Heqv2. rewrite -> Heqv2 in Heqv0. inversion Heqv0. reflexivity.
+
+(*Solves 21/25 proof by contradiction of Pbtbl*)
+all: try temp_solver.
+
+(*4 annoying remaining edge cases*)
+subst. rewrite Heqo1 in Heqo. inversion Heqo. subst. rewrite Heqo2 in Heqo0. discriminate.
+subst. rewrite Heqo1 in Heqo. inversion Heqo.
+subst. rewrite Heqo1 in Heqo. inversion Heqo. subst. rewrite Heqo2 in Heqo0. discriminate.
+subst.  rewrite Heqo0 in Heqo. inversion Heqo. 
 Qed.
 
 
