@@ -20,38 +20,13 @@ Require Import Coq.Lists.List.
 Import ListNotations.
 Require Stacklayout.
 
-(** * Abstract syntax *)
-
 
 Definition processor_id := Z.
 Definition processor_reg := (processor_id * preg) % type.
-(* 
-Definition preg_uri: Type := (processor_id * preg) % type.
-Definition ireg_uri: Type := (processor_id * ireg) % type.
-Definition freg_uri: Type := (processor_id * freg) % type. *)
-(* 
-Definition preg_comp_to_uri: (processor_id * preg) % type -> preg_uri := fun x => x.
-
-Coercion preg_comp_to_uri: (processor_id * preg) % type >-> preg_uri.
-
-Inductive processor_reg : Type :=
- | preg_to_proc_reg: preg_uri -> processor_reg
- | ireg_to_proc_reg: ireg_uri -> processor_reg
- | freg_to_proc_reg: freg_uri -> processor_reg. 
-
-
-Coercion preg_to_proc_reg: preg_uri>-> processor_reg.
-Coercion ireg_to_proc_reg: ireg_uri>-> processor_reg.
-Coercion freg_to_proc_reg: freg_uri>-> processor_reg. *)
 
 Remark pr_eq:
   forall (r1 r2: processor_reg), {r1 = r2} + {r1 <> r2}.
 Proof.
-    (* decide equality. destruct p; destruct p0; decide equality. apply preg_eq. apply Z.eq_dec.
-    decide equality. destruct p. apply ireg_eq; destruct a; apply ireg_eq. apply ireg_eq.
-    decide equality. apply Z.eq_dec.
-    decide equality. apply freg_eq. apply Z.eq_dec.  *)
-
     decide equality. apply preg_eq. apply Z.eq_dec.
 Qed.
 
@@ -68,6 +43,59 @@ End PREq.
 
 Module PRmap := EMap(PREq).
 
+(** * Operational semantics *)
+
+(** The semantics operates over a single mapping from registers
+  (type [preg]) to values.  We maintain (but do not enforce)
+  the convention that integer registers are mapped to values of
+  type [Tint], float registers to values of type [Tfloat],
+  and condition bits to either [Vzero] or [Vone]. *)
+
+
+(** Map of processor id + regcode to val for that processor*)
+Definition allregsets := PRmap.t val.
+
+(** Memory model*)
+Definition mem_transaction_id := Z.
+
+Remark tx_eq:
+  forall (r1 r2: mem_transaction_id), {r1 = r2} + {r1 <> r2}.
+Proof.
+    apply Z.eq_dec.
+Qed.
+
+Module TrxEq.
+  Definition t := mem_transaction_id.
+  Definition eq := tx_eq.
+End TrxEq. 
+
+Module Trmap := EMap(TrxEq).
+
+Definition early_write_id: Type := (processor_id * val) % type.
+
+Remark ew_eq:
+  forall (r1 r2: early_write_id), {r1 = r2} + {r1 <> r2}.
+Proof.
+    intros. decide equality. apply Val.eq. apply Z.eq_dec. 
+Qed.
+
+Module EWEq.
+  Definition t := early_write_id.
+  Definition eq := ew_eq.
+End EWEq.
+
+Module EWmap := EMap(EWEq).
+
+(* (Unenforced) convention: for writes, the first val is the ptr to the memory address, the second val is the value that is to be written*)
+(*second val is arbitrary for reads - we set it to 0*)
+Definition in_flight_mem_ops := Trmap.t (option (val* val) % type).
+
+(* map of (process id, val (unenforced convention: Vptr)) to value. Used to determine if that processor has a more recent early acked write than is serialized in mem*)
+Definition early_ack_writes := EWmap.t (option val).
+
+
+
+
 Inductive instruction: Type :=
   (** Branches *)
   | Pb (lbl: label) (pid: processor_id)                                            (**r branch *)
@@ -82,24 +110,24 @@ Inductive instruction: Type :=
   | Ptbnz (sz: isize) (r: ireg) (n: int) (lbl: label) (pid: processor_id)          (**r branch if bit n is not zero *)
   | Ptbz (sz: isize) (r: ireg) (n: int) (lbl: label) (pid: processor_id)           (**r branch if bit n is zero *)
   (** Memory loads and stores *)
-  | Pldrw (rd: ireg) (a: addressing) (pid: processor_id)                           (**r load int32 *)
-  | Pldrw_a (rd: ireg) (a: addressing) (pid: processor_id)                         (**r load int32 as any32 *)
-  | Pldrx (rd: ireg) (a: addressing) (pid: processor_id)                           (**r load int64 *)
-  | Pldrx_a (rd: ireg) (a: addressing) (pid: processor_id)                         (**r load int64 as any64 *)
-  | Pldrb (sz: isize) (rd: ireg) (a: addressing) (pid: processor_id)               (**r load int8, zero-extend *)
-  | Pldrsb (sz: isize) (rd: ireg) (a: addressing) (pid: processor_id)              (**r load int8, sign-extend *)
-  | Pldrh (sz: isize) (rd: ireg) (a: addressing) (pid: processor_id)               (**r load int16, zero-extend *)
-  | Pldrsh (sz: isize) (rd: ireg) (a: addressing) (pid: processor_id)              (**r load int16, sign-extend *)
-  | Pldrzw (rd: ireg) (a: addressing) (pid: processor_id)                          (**r load int32, zero-extend to int64 *)
-  | Pldrsw (rd: ireg) (a: addressing) (pid: processor_id)                          (**r load int32, sign-extend to int64 *)
-  | Pldp (rd1 rd2: ireg) (a: addressing) (pid: processor_id)                        (**r load two int64 *)
-  | Pstrw (rs: ireg) (a: addressing) (pid: processor_id)                           (**r store int32 *)
-  | Pstrw_a (rs: ireg) (a: addressing) (pid: processor_id)                         (**r store int32 as any32 *)
-  | Pstrx (rs: ireg) (a: addressing) (pid: processor_id)                           (**r store int64 *)
-  | Pstrx_a (rs: ireg) (a: addressing) (pid: processor_id)                         (**r store int64 as any64 *)
-  | Pstrb (rs: ireg) (a: addressing) (pid: processor_id)                           (**r store int8 *)
-  | Pstrh (rs: ireg) (a: addressing) (pid: processor_id)                           (**r store int16 *)
-  | Pstp (rs1 rs2: ireg) (a: addressing) (pid: processor_id)                       (**r store two int64 *)
+  | Pldrw (rd: ireg) (a: addressing) (pid: processor_id) (tx_id: mem_transaction_id)                           (**r load int32 *)
+  | Pldrw_a (rd: ireg) (a: addressing) (pid: processor_id) (tx_id: mem_transaction_id)                         (**r load int32 as any32 *)
+  | Pldrx (rd: ireg) (a: addressing) (pid: processor_id) (tx_id: mem_transaction_id)                           (**r load int64 *)
+  | Pldrx_a (rd: ireg) (a: addressing) (pid: processor_id)  (tx_id: mem_transaction_id)                       (**r load int64 as any64 *)
+  | Pldrb (sz: isize) (rd: ireg) (a: addressing) (pid: processor_id) (tx_id: mem_transaction_id)              (**r load int8, zero-extend *)
+  | Pldrsb (sz: isize) (rd: ireg) (a: addressing) (pid: processor_id)  (tx_id: mem_transaction_id)            (**r load int8, sign-extend *)
+  | Pldrh (sz: isize) (rd: ireg) (a: addressing) (pid: processor_id)   (tx_id: mem_transaction_id)            (**r load int16, zero-extend *)
+  | Pldrsh (sz: isize) (rd: ireg) (a: addressing) (pid: processor_id) (tx_id: mem_transaction_id)             (**r load int16, sign-extend *)
+  | Pldrzw (rd: ireg) (a: addressing) (pid: processor_id) (tx_id: mem_transaction_id)                         (**r load int32, zero-extend to int64 *)
+  | Pldrsw (rd: ireg) (a: addressing) (pid: processor_id) (tx_id: mem_transaction_id)                         (**r load int32, sign-extend to int64 *)
+  | Pldp (rd1 rd2: ireg) (a: addressing) (pid: processor_id) (tx_id: mem_transaction_id)                        (**r load two int64 *)
+  | Pstrw (a: addressing) (pid: processor_id) (tx_id: mem_transaction_id)                          (**r store int32 *)
+  | Pstrw_a (a: addressing) (pid: processor_id) (tx_id: mem_transaction_id)                        (**r store int32 as any32 *)
+  | Pstrx (a: addressing) (pid: processor_id) (tx_id: mem_transaction_id)                           (**r store int64 *)
+  | Pstrx_a (a: addressing) (pid: processor_id) (tx_id: mem_transaction_id)                         (**r store int64 as any64 *)
+  | Pstrb (a: addressing) (pid: processor_id) (tx_id: mem_transaction_id)                           (**r store int8 *)
+  | Pstrh (a: addressing) (pid: processor_id) (tx_id: mem_transaction_id)                          (**r store int16 *)
+  | Pstp (a: addressing) (pid: processor_id) (tx_id: mem_transaction_id)                       (**r store two int64 *)
   (** Integer arithmetic, immediate *)
   | Paddimm (sz: isize) (rd: iregsp) (r1: iregsp) (n: Z) (pid: processor_id)       (**r addition *)
   | Psubimm (sz: isize) (rd: iregsp) (r1: iregsp) (n: Z) (pid: processor_id)       (**r subtraction *)
@@ -167,12 +195,12 @@ Inductive instruction: Type :=
   | Psdiv (sz: isize) (rd: ireg) (r1 r2: ireg) (pid: processor_id)                 (**r signed division *)
   | Pudiv (sz: isize) (rd: ireg) (r1 r2: ireg) (pid: processor_id)                 (**r unsigned division *)
   (** Floating-point loads and stores *)
-  | Pldrs (rd: freg) (a: addressing) (pid: processor_id)                           (**r load float32 (single precision) *)
-  | Pldrd (rd: freg) (a: addressing) (pid: processor_id)                           (**r load float64 (double precision) *)
-  | Pldrd_a (rd: freg) (a: addressing) (pid: processor_id)                         (**r load float64 as any64 *)
-  | Pstrs (rs: freg) (a: addressing) (pid: processor_id)                           (**r store float32 *)
-  | Pstrd (rs: freg) (a: addressing) (pid: processor_id)                           (**r store float64 *)
-  | Pstrd_a (rs: freg) (a: addressing) (pid: processor_id)                         (**r store float64 as any64 *)
+  | Pldrs (rd: freg) (a: addressing) (pid: processor_id) (tx_id: mem_transaction_id)                           (**r load float32 (single precision) *)
+  | Pldrd (rd: freg) (a: addressing) (pid: processor_id)  (tx_id: mem_transaction_id)                         (**r load float64 (double precision) *)
+  | Pldrd_a (rd: freg) (a: addressing) (pid: processor_id)  (tx_id: mem_transaction_id)                        (**r load float64 as any64 *)
+  | Pstrs (a: addressing) (pid: processor_id)  (tx_id: mem_transaction_id)                         (**r store float32 *)
+  | Pstrd  (a: addressing) (pid: processor_id) (tx_id: mem_transaction_id)                          (**r store float64 *)
+  | Pstrd_a (a: addressing) (pid: processor_id) (tx_id: mem_transaction_id)                         (**r store float64 as any64 *)
   (** Floating-point move *)
   | Pfmov (rd r1: freg) (pid: processor_id) 
   | Pfmovimms (rd: freg) (f: float32) (pid: processor_id)                          (**r load float32 constant *)
@@ -220,21 +248,12 @@ Inductive instruction: Type :=
   | Pcfi_adjust (ofs: int) (pid: processor_id)                                     (**r .cfi_adjust debug directive *)
   | Pcfi_rel_offset (ofs: int) (pid: processor_id)                                 (**r .cfi_rel_offset debug directive *)
   | Pincpc (pid: processor_id) (** my own thing, represents incrementing PC*)
-.
-
-
-(** * Operational semantics *)
-
-(** The semantics operates over a single mapping from registers
-  (type [preg]) to values.  We maintain (but do not enforce)
-  the convention that integer registers are mapped to values of
-  type [Tint], float registers to values of type [Tfloat],
-  and condition bits to either [Vzero] or [Vone]. *)
-
-
-(** Map of processor id + regcode to val for that processor*)
-Definition allregsets := PRmap.t val.
-
+  | Memfence (pid: processor_id) (** memory fence *)
+  | EarlyAck (txid: mem_transaction_id) (pid: processor_id) (** Early write acknowledgement*)
+  | WriteRequest (txid: mem_transaction_id) (pid: processor_id) (a: addressing) (r: preg) (** Serialize a transaction in memory*)
+  | WriteAck (txid: mem_transaction_id) (pid: processor_id) (* Acknowledges memory serialization*)
+  | ReadRequest (txid: mem_transaction_id) (pid: processor_id) (a: addressing) (* Requests value from memory*)
+  .
 
 
 (* Bidirectionality hint -> helps convert processor_id, preg -> PRMap.t*)
@@ -252,17 +271,17 @@ Notation "a @@ c @@> b" := (ir0w a b c) (at level 1, only parsing).
 Notation "a @@@ c @@@> b" := (ir0x a b c) (at level 1, only parsing).
 
 Inductive outcome: Type := 
-    | MemSimNext: allregsets -> mem -> outcome
-    | MemSimJumpOut: allregsets -> mem -> outcome
+    | MemSimNext: allregsets -> mem -> in_flight_mem_ops -> early_ack_writes -> outcome
+    | MemSimJumpOut: allregsets -> mem -> in_flight_mem_ops -> early_ack_writes -> outcome
     | MemSimStuck: outcome.
 
 
-Definition goto_label (f: function) (lbl: label) (ars: allregsets) (pid: processor_id) (m: mem) :=
+Definition goto_label (f: function) (lbl: label) (ars: allregsets) (pid: processor_id) (m: mem) (ifmo: in_flight_mem_ops) (eaw: early_ack_writes) :=
     match label_pos lbl 0 (fn_code f) with
     | None => MemSimStuck
     | Some pos =>
         match ars@(pid, PC) with
-        | Vptr b ofs => MemSimJumpOut (ars@(pid, PC ) <- (Vptr b (Ptrofs.repr pos))) m
+        | Vptr b ofs => MemSimJumpOut (ars@(pid, PC ) <- (Vptr b (Ptrofs.repr pos))) m ifmo eaw
         | _ => MemSimStuck
         end
     end.
@@ -346,20 +365,55 @@ Definition eval_addressing (a: addressing) (ars: allregsets) (pid: processor_id)
   | ADpostincr base n => Vundef (* not modeled yet *)
   end.
 
-Definition exec_load (chunk: memory_chunk) (transf: val -> val)
-    (a: addressing) (r: preg) (ars: allregsets) (pid: processor_id) (m: mem)  :=
-    match Mem.loadv chunk m (eval_addressing a ars pid) with
-    | None => MemSimStuck
-    | Some v => MemSimNext (ars@(pid, r) <- (transf v)) m
+Definition read_request (a: addressing) (txid: mem_transaction_id)(ars: allregsets)(pid:processor_id)(ifmo: in_flight_mem_ops): in_flight_mem_ops :=
+    Trmap.set txid (Some (eval_addressing a ars pid, Vundef)) ifmo.
+
+(*Used for read acks*)
+Definition read_ack (chunk: memory_chunk) (transf: val -> val) (tx_id: mem_transaction_id)
+  (r: preg) (ars: allregsets) (pid: processor_id) (m: mem) (ifmo: in_flight_mem_ops) (eaw: early_ack_writes): outcome  :=
+    (*Check if anything is in early write*)
+    match ifmo tx_id with 
+        | Some (address, _) => match Mem.loadv chunk m address with
+            | None => MemSimStuck
+            | Some v => MemSimNext (ars@(pid, r) <- (transf v)) m ifmo eaw
+            end
+        (* | Some (address, _) => match eaw (pid, address) with 
+            | Some v =>  MemSimNext (ars@(pid, r) <- (transf v)) m (Trmap.set tx_id None ifmo) eaw
+            (*If not, read from main memory*)
+            | None => match Mem.loadv chunk m address with
+                | None => MemSimStuck
+                | Some v => MemSimNext (ars@(pid, r) <- (transf v)) m ifmo eaw
+                end
+        end *)
+        | None => MemSimStuck
     end.
 
-Definition exec_store (chunk: memory_chunk)
-    (a: addressing) (v: val)
-    (ars: allregsets) (pid: processor_id) (m: mem) :=
-match Mem.storev chunk m (eval_addressing a ars pid) v with
-| None => MemSimStuck
-| Some m' => MemSimNext ars m'
+Definition early_ack_write (tx_id: mem_transaction_id) (pid:processor_id) (eaw: early_ack_writes)(ifmo: in_flight_mem_ops) : early_ack_writes :=
+    match ifmo tx_id with
+    | Some (address, value) => EWmap.set (pid, address) (Some value) eaw
+    | None => eaw (* Should not happen*)
+    end.    
+
+Definition write_request  (a: addressing) (v: val) (txid: mem_transaction_id)
+(ars: allregsets) (pid: processor_id) (ifmo: in_flight_mem_ops) : in_flight_mem_ops :=
+    Trmap.set txid (Some (eval_addressing a ars pid, v)) ifmo.     
+
+
+(*Used for write serialization*)
+(*Also removes early write acks*)
+Definition serialize_write (chunk: memory_chunk) 
+    (txid: mem_transaction_id)
+    (ars: allregsets) (pid: processor_id) (m: mem) (ifmo: in_flight_mem_ops) (eaw: early_ack_writes) :=
+    match ifmo txid with
+    | Some (a, v) => match Mem.storev chunk m a v with
+        | None => MemSimStuck
+        | Some m' => MemSimNext ars m' ifmo (EWmap.set (pid,a) None eaw)
+        end
+    | None => MemSimStuck
 end.
+
+Definition write_ack (tx_id: mem_transaction_id) (pid:processor_id) (ifmo: in_flight_mem_ops) : in_flight_mem_ops :=
+    Trmap.set tx_id None ifmo.
 
 Definition compare_int (ars: allregsets) (v1 v2: val) (m: mem) (pid: processor_id) :=
   ars@(pid, CN) <- (Val.negative (Val.sub v1 v2))
@@ -401,236 +455,236 @@ Definition compare_single (ars: allregsets) (v1 v2: val) (pid: processor_id) :=
       @(pid, CV) <- Vundef
   end.
 
-Definition eval_memsim_instr (f: function) (i: instruction) (ars: allregsets) (m: mem) : outcome :=
+Definition eval_memsim_instr (f: function) (i: instruction) (ars: allregsets) (m: mem) (ifo: in_flight_mem_ops) (eaw: early_ack_writes): outcome :=
     match i with
     (** Branches *)
     | Pb lbl pid =>
-        goto_label f lbl ars pid m
+        goto_label f lbl ars pid m ifo eaw
     | Pbc cond lbl pid =>
         match eval_testcond cond ars pid with
-        | Some true => goto_label f lbl ars pid m
-        | Some false => MemSimNext ars m
+        | Some true => goto_label f lbl ars pid m ifo eaw
+        | Some false => MemSimNext ars m ifo eaw
         | None => MemSimStuck
         end
     | Pbl id sg pid =>
-        MemSimNext (ars@ (pid, RA)  <- (Val.offset_ptr ars@ (pid, PC)  Ptrofs.one) @ (pid, PC) <- (Genv.symbol_address ge id Ptrofs.zero)) m
+        MemSimNext (ars@ (pid, RA)  <- (Val.offset_ptr ars@ (pid, PC)  Ptrofs.one) @ (pid, PC) <- (Genv.symbol_address ge id Ptrofs.zero)) m ifo eaw
     | Pbs id sg pid =>
-        MemSimNext (ars@ (pid , PC)  <- (Genv.symbol_address ge id Ptrofs.zero)) m
+        MemSimNext (ars@ (pid , PC)  <- (Genv.symbol_address ge id Ptrofs.zero)) m ifo eaw
     | Pblr r sg pid =>
-        MemSimNext (ars@ (pid , RA)  <- (Val.offset_ptr ars@ (pid , PC)  Ptrofs.one) @ (pid, PC) <- (ars@ (pid , r)) ) m
+        MemSimNext (ars@ (pid , RA)  <- (Val.offset_ptr ars@ (pid , PC)  Ptrofs.one) @ (pid, PC) <- (ars@ (pid , r)) ) m ifo eaw
     | Pbr r sg pid =>
-        MemSimNext (ars@ (pid , PC)  <- (ars@ (pid , r)) ) m
+        MemSimNext (ars@ (pid , PC)  <- (ars@ (pid , r)) ) m ifo eaw
     | Pret r pid =>
-        MemSimNext (ars@ (pid , PC)  <- (ars@ (pid , r)) ) m
+        MemSimNext (ars@ (pid , PC)  <- (ars@ (pid , r)) ) m ifo eaw
     | Pcbnz sz r lbl pid =>
-        match eval_testzero sz ars@ (pid , r ) m with
-        | Some true => MemSimNext ars m
-        | Some false => goto_label f lbl ars pid m
+        match eval_testzero sz ars@ (pid, r) m with
+        | Some true => MemSimNext ars m ifo eaw
+        | Some false => goto_label f lbl ars pid m ifo eaw
         | None => MemSimStuck
         end
     | Pcbz sz r lbl pid =>
         match eval_testzero sz ars@ (pid , r ) m with
-        | Some true => goto_label f lbl ars pid m
-        | Some false => MemSimNext ars m
+        | Some true => goto_label f lbl ars pid m ifo eaw
+        | Some false => MemSimNext ars m ifo eaw
         | None => MemSimStuck
         end
     | Ptbnz sz r n lbl pid =>
         match eval_testbit sz ars@ (pid , r ) n with
-        | Some true => goto_label f lbl ars pid m
-        | Some false => MemSimNext ars m
+        | Some true => goto_label f lbl ars pid m ifo eaw
+        | Some false => MemSimNext ars m ifo eaw
         | None => MemSimStuck
         end
     | Ptbz sz r n lbl pid =>
         match eval_testbit sz ars@ (pid , r ) n with
-        | Some true => MemSimNext ars m
-        | Some false => goto_label f lbl ars pid m
+        | Some true => MemSimNext ars m ifo eaw
+        | Some false => goto_label f lbl ars pid m ifo eaw
         | None => MemSimStuck
         end
     (** Memory loads and stores *)
-    | Pldrw rd a pid =>
-        exec_load Mint32 (fun v => v) a rd ars pid m
-    | Pldrw_a rd a pid =>
-        exec_load Many32 (fun v => v) a rd ars pid m
-    | Pldrx rd a pid =>
-        exec_load Mint64 (fun v => v) a rd ars pid m
-    | Pldrx_a rd a pid =>
-        exec_load Many64 (fun v => v) a rd ars pid m
-    | Pldrb W rd a pid =>
-        exec_load Mint8unsigned (fun v => v) a rd ars pid m
-    | Pldrb X rd a pid =>
-        exec_load Mint8unsigned Val.longofintu a rd ars pid m
-    | Pldrsb W rd a pid =>
-        exec_load Mint8signed (fun v => v) a rd ars pid m
-    | Pldrsb X rd a pid =>
-        exec_load Mint8signed Val.longofint a rd ars pid m
-    | Pldrh W rd a pid =>
-        exec_load Mint16unsigned (fun v => v) a rd ars pid m
-    | Pldrh X rd a pid =>
-        exec_load Mint16unsigned Val.longofintu a rd ars pid m
-    | Pldrsh W rd a pid =>
-        exec_load Mint16signed (fun v => v) a rd ars pid m
-    | Pldrsh X rd a pid =>
-        exec_load Mint16signed Val.longofint a rd ars pid m
-    | Pldrzw rd a pid =>
-        exec_load Mint32 Val.longofintu a rd ars pid m
-    | Pldrsw rd a pid =>
-        exec_load Mint32 Val.longofint a rd ars pid m
-    | Pstrw r a pid =>
-        exec_store Mint32 a ars@(pid, r) ars pid m
-    | Pstrw_a r a pid =>
-        exec_store Many32 a  ars@(pid, r) ars pid m
-    | Pstrx r a pid =>
-        exec_store Mint64 a  ars@(pid, r) ars pid m
-    | Pstrx_a r a pid =>
-        exec_store Many64 a  ars@(pid, r) ars pid m
-    | Pstrb r a pid =>
-        exec_store Mint8unsigned a ars@(pid, r) ars pid m
-    | Pstrh r a pid =>
-        exec_store Mint16unsigned a ars@(pid, r) ars pid m
+    | Pldrw rd a pid txid =>
+        read_ack Mint32 (fun v => v) txid rd ars pid m ifo eaw
+    | Pldrw_a rd a pid txid =>
+        read_ack Many32 (fun v => v) txid rd ars pid m ifo eaw
+    | Pldrx rd a pid txid =>
+        read_ack Mint64 (fun v => v) txid rd ars pid m ifo eaw
+    | Pldrx_a rd a pid txid =>
+        read_ack Many64 (fun v => v) txid rd ars pid m ifo eaw
+    | Pldrb W rd a pid txid =>
+        read_ack Mint8unsigned (fun v => v) txid rd ars pid m ifo eaw
+    | Pldrb X rd a pid txid =>
+        read_ack Mint8unsigned Val.longofintu txid rd ars pid m ifo eaw
+    | Pldrsb W rd a pid txid =>
+        read_ack Mint8signed (fun v => v) txid rd ars pid m ifo eaw
+    | Pldrsb X rd a pid txid =>
+         read_ack Mint8signed Val.longofint txid rd ars pid m ifo eaw
+    | Pldrh W rd a pid txid =>
+        read_ack Mint16unsigned (fun v => v) txid rd ars pid m ifo eaw
+    | Pldrh X rd a pid txid =>
+        read_ack Mint16unsigned (Val.longofintu) txid rd ars pid m ifo eaw
+    | Pldrsh W rd a pid txid =>
+        read_ack Mint16signed (fun v => v) txid rd ars pid m ifo eaw
+    | Pldrsh X rd a pid txid =>
+        read_ack Mint16signed (Val.longofint) txid rd ars pid m ifo eaw
+    | Pldrzw rd a pid txid =>
+        read_ack Mint32 (Val.longofintu) txid rd ars pid m ifo eaw
+    | Pldrsw rd a pid txid =>
+        read_ack Mint32 (Val.longofint) txid rd ars pid m ifo eaw
+    | Pstrw a pid txid =>
+        serialize_write Mint32 txid ars pid m ifo eaw
+    | Pstrw_a a pid txid =>
+        serialize_write Many32 txid ars pid m ifo eaw
+    | Pstrx a pid txid =>
+        serialize_write Mint64 txid ars pid m ifo eaw
+    | Pstrx_a a pid txid =>
+        serialize_write Many64 txid ars pid m ifo eaw
+    | Pstrb a pid txid =>
+        serialize_write Mint8unsigned txid ars pid m ifo eaw
+    | Pstrh a pid txid =>
+        serialize_write Mint16unsigned txid ars pid m ifo eaw
     (** Integer arithmetic, immediate *)
     | Paddimm W rd r1 n pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.add ars@ (pid, r1)  (Vint (Int.repr n))))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.add ars@ (pid, r1)  (Vint (Int.repr n))))) m ifo eaw
     | Paddimm X rd r1 n pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.addl ars@ (pid, r1)  (Vlong (Int64.repr n))))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.addl ars@ (pid, r1)  (Vlong (Int64.repr n))))) m ifo eaw
     | Psubimm W rd r1 n pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.sub ars@ (pid, r1)  (Vint (Int.repr n))))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.sub ars@ (pid, r1)  (Vint (Int.repr n))))) m ifo eaw
     | Psubimm X rd r1 n pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.subl ars@ (pid, r1)  (Vlong (Int64.repr n))))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.subl ars@ (pid, r1)  (Vlong (Int64.repr n))))) m ifo eaw
     | Pcmpimm W r1 n pid =>
-        MemSimNext ((compare_int ars ars@(pid, r1)  (Vint (Int.repr n)) m) pid ) m
+        MemSimNext ((compare_int ars ars@(pid, r1)  (Vint (Int.repr n)) m) pid ) m ifo eaw
     | Pcmpimm X r1 n pid =>
-        MemSimNext ((compare_long ars ars@ (pid, r1)  (Vlong (Int64.repr n)) m) pid ) m
+        MemSimNext ((compare_long ars ars@ (pid, r1)  (Vlong (Int64.repr n)) m) pid ) m ifo eaw
     | Pcmnimm W r1 n pid =>
-        MemSimNext ((compare_int ars ars@ (pid, r1)  (Vint (Int.neg (Int.repr n))) m) pid) m
+        MemSimNext ((compare_int ars ars@ (pid, r1)  (Vint (Int.neg (Int.repr n))) m) pid) m ifo eaw
     | Pcmnimm X r1 n pid =>
-        MemSimNext ((compare_long ars ars@ (pid, r1)  (Vlong (Int64.neg (Int64.repr n))) m) pid) m
+        MemSimNext ((compare_long ars ars@ (pid, r1)  (Vlong (Int64.neg (Int64.repr n))) m) pid) m ifo eaw
     (** Move integer register *)
     | Pmov rd r1 pid =>
-        MemSimNext ( (ars@ (pid, rd)  <- (ars@ (pid, r1) ))) m
+        MemSimNext ( (ars@ (pid, rd)  <- (ars@ (pid, r1) ))) m ifo eaw
     (** Logical, immediate *)
     | Pandimm W rd r1 n pid =>
-        MemSimNext ((ars@(pid, rd)  <- (Val.and (ars@@ pid @@> r1) (Vint (Int.repr n))))) m
+        MemSimNext ((ars@(pid, rd)  <- (Val.and (ars@@ pid @@> r1) (Vint (Int.repr n))))) m ifo eaw
     | Pandimm X rd r1 n pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.andl (ars@@@ pid @@@> r1) (Vlong (Int64.repr n))))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.andl (ars@@@ pid @@@> r1) (Vlong (Int64.repr n))))) m ifo eaw
     | Peorimm W rd r1 n pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.xor (ars@@ pid @@> r1)  (Vint (Int.repr n))))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.xor (ars@@ pid @@> r1)  (Vint (Int.repr n))))) m ifo eaw
     | Peorimm X rd r1 n pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.xorl (ars@@@ pid @@@> r1) (Vlong (Int64.repr n))))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.xorl (ars@@@ pid @@@> r1) (Vlong (Int64.repr n))))) m ifo eaw
     | Porrimm W rd r1 n pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.or (ars@@ pid @@> r1) (Vint (Int.repr n))))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.or (ars@@ pid @@> r1) (Vint (Int.repr n))))) m ifo eaw
     | Porrimm X rd r1 n pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.orl (ars@@@ pid @@@> r1) (Vlong (Int64.repr n))))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.orl (ars@@@ pid @@@> r1) (Vlong (Int64.repr n))))) m ifo eaw
     | Ptstimm W r1 n pid =>
-        MemSimNext (compare_int ars (Val.and ars@ (pid, r1)  (Vint (Int.repr n))) (Vint Int.zero) m pid) m
+        MemSimNext (compare_int ars (Val.and ars@ (pid, r1)  (Vint (Int.repr n))) (Vint Int.zero) m pid) m ifo eaw
     | Ptstimm X r1 n pid =>
-        MemSimNext ((compare_long ars (Val.andl ars@ (pid, r1)  (Vlong (Int64.repr n))) (Vlong Int64.zero) m pid)) m
+        MemSimNext ((compare_long ars (Val.andl ars@ (pid, r1)  (Vlong (Int64.repr n))) (Vlong Int64.zero) m pid)) m ifo eaw
     (** Move wide immediate *)
     | Pmovz W rd n pos pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Vint (Int.repr (Z.shiftl n pos))))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Vint (Int.repr (Z.shiftl n pos))))) m ifo eaw
     | Pmovz X rd n pos pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Vlong (Int64.repr (Z.shiftl n pos))))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Vlong (Int64.repr (Z.shiftl n pos))))) m ifo eaw
     | Pmovn W rd n pos pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Vint (Int.repr (Z.lnot (Z.shiftl n pos)))))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Vint (Int.repr (Z.lnot (Z.shiftl n pos)))))) m ifo eaw
     | Pmovn X rd n pos pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Vlong (Int64.repr (Z.lnot (Z.shiftl n pos)))))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Vlong (Int64.repr (Z.lnot (Z.shiftl n pos)))))) m ifo eaw
     | Pmovk W rd n pos pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (insert_in_int ars@ (pid, rd)  n pos 16))) m
+        MemSimNext ((ars@ (pid, rd)  <- (insert_in_int ars@ (pid, rd)  n pos 16))) m ifo eaw
     | Pmovk X rd n pos pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (insert_in_long ars@ (pid, rd)  n pos 16))) m
+        MemSimNext ((ars@ (pid, rd)  <- (insert_in_long ars@ (pid, rd)  n pos 16))) m ifo eaw
     (** PC-relative addressing *)
     | Padrp rd id ofs pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (symbol_high ge id ofs))) m
+        MemSimNext ((ars@ (pid, rd)  <- (symbol_high ge id ofs))) m ifo eaw
     | Paddadr rd r1 id ofs pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.addl ars@ (pid, r1)  (symbol_low ge id ofs)))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.addl ars@ (pid, r1)  (symbol_low ge id ofs)))) m  ifo eaw
     (** Bit-field operations *)
     | Psbfiz W rd r1 r s pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.shl (Val.sign_ext s ars@ (pid, r1) ) (Vint r)))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.shl (Val.sign_ext s ars@ (pid, r1) ) (Vint r)))) m ifo eaw
     | Psbfiz X rd r1 r s pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.shll (Val.sign_ext_l s ars@ (pid, r1) ) (Vint r)))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.shll (Val.sign_ext_l s ars@ (pid, r1) ) (Vint r)))) m ifo eaw
     | Psbfx W rd r1 r s pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.sign_ext s (Val.shr ars@ (pid, r1)  (Vint r))))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.sign_ext s (Val.shr ars@ (pid, r1)  (Vint r))))) m ifo eaw
     | Psbfx X rd r1 r s pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.sign_ext_l s (Val.shrl ars@ (pid, r1)  (Vint r))))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.sign_ext_l s (Val.shrl ars@ (pid, r1)  (Vint r))))) m ifo eaw
     | Pubfiz W rd r1 r s pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.shl (Val.zero_ext s ars@ (pid, r1) ) (Vint r)))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.shl (Val.zero_ext s ars@ (pid, r1) ) (Vint r)))) m ifo eaw
     | Pubfiz X rd r1 r s pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.shll (Val.zero_ext_l s ars@ (pid, r1) ) (Vint r)))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.shll (Val.zero_ext_l s ars@ (pid, r1) ) (Vint r)))) m ifo eaw
     | Pubfx W rd r1 r s pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.zero_ext s (Val.shru ars@ (pid, r1)  (Vint r))))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.zero_ext s (Val.shru ars@ (pid, r1)  (Vint r))))) m ifo eaw
     | Pubfx X rd r1 r s pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.zero_ext_l s (Val.shrlu ars@ (pid, r1)  (Vint r))))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.zero_ext_l s (Val.shrlu ars@ (pid, r1)  (Vint r))))) m ifo eaw
     (** Integer arithmetic, shifted register *)
     | Padd W rd r1 r2 s pid =>
-        MemSimNext (ars@ (pid, rd)  <- (Val.add ars@@ pid @@> r1 (eval_shift_op_int ars@ (pid, r2)  s))) m
+        MemSimNext (ars@ (pid, rd)  <- (Val.add ars@@ pid @@> r1 (eval_shift_op_int ars@ (pid, r2)  s))) m ifo eaw
     | Padd X rd r1 r2 s pid =>
-        MemSimNext (ars@ (pid, rd)  <- (Val.addl ars@@@pid @@@> r1 (eval_shift_op_long ars@ (pid, r2)  s))) m
+        MemSimNext (ars@ (pid, rd)  <- (Val.addl ars@@@pid @@@> r1 (eval_shift_op_long ars@ (pid, r2)  s))) m ifo eaw
     | Psub W rd r1 r2 s pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.sub ars@@pid @@> r1 (eval_shift_op_int ars@ (pid, r2)  s)))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.sub ars@@pid @@> r1 (eval_shift_op_int ars@ (pid, r2)  s)))) m ifo eaw
     | Psub X rd r1 r2 s pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.subl ars@@@ pid@@@> r1 (eval_shift_op_long ars@ (pid, r2)  s)))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.subl ars@@@ pid@@@> r1 (eval_shift_op_long ars@ (pid, r2)  s)))) m ifo eaw
     | Pcmp W r1 r2 s pid =>
-        MemSimNext (compare_int ars (ars@@pid@@>r1) (eval_shift_op_int ars@(pid, r2)  s) m pid) m
+        MemSimNext (compare_int ars (ars@@pid@@>r1) (eval_shift_op_int ars@(pid, r2)  s) m pid) m ifo eaw
     | Pcmp X r1 r2 s pid =>
-        MemSimNext ((compare_long ars ars@@@pid@@@>r1) (eval_shift_op_long ars@ (pid, r2)  s) m pid) m
+        MemSimNext ((compare_long ars ars@@@pid@@@>r1) (eval_shift_op_long ars@ (pid, r2)  s) m pid) m ifo eaw
     | Pcmn W r1 r2 s pid =>
-        MemSimNext (compare_int ars ars@@pid@@>r1 (Val.neg (eval_shift_op_int ars@ (pid, r2)  s)) m pid) m
+        MemSimNext (compare_int ars ars@@pid@@>r1 (Val.neg (eval_shift_op_int ars@ (pid, r2)  s)) m pid) m ifo eaw
     | Pcmn X r1 r2 s pid =>
-        MemSimNext ((compare_long ars ars@@@pid@@@>r1 (Val.negl (eval_shift_op_long ars@ (pid, r2)  s)) m pid)) m
+        MemSimNext ((compare_long ars ars@@@pid@@@>r1 (Val.negl (eval_shift_op_long ars@ (pid, r2)  s)) m pid)) m ifo eaw
     (** Integer arithmetic, extending register *)
     | Paddext rd r1 r2 x pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.addl ars@ (pid, r1)  (eval_extend ars@ (pid, r2)  x)))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.addl ars@ (pid, r1)  (eval_extend ars@ (pid, r2)  x)))) m ifo eaw
     | Psubext rd r1 r2 x pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.subl ars@ (pid, r1)  (eval_extend ars@ (pid, r2)  x)))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.subl ars@ (pid, r1)  (eval_extend ars@ (pid, r2)  x)))) m ifo eaw
     | Pcmpext r1 r2 x pid =>
-        MemSimNext ((compare_long ars ars@ (pid, r1)  (eval_extend ars@ (pid, r2)  x) m pid)) m
+        MemSimNext ((compare_long ars ars@ (pid, r1)  (eval_extend ars@ (pid, r2)  x) m pid)) m ifo eaw
     | Pcmnext r1 r2 x pid =>
-        MemSimNext ((compare_long ars ars@ (pid, r1)  (Val.negl (eval_extend ars@ (pid, r2)  x)) m pid)) m
+        MemSimNext ((compare_long ars ars@ (pid, r1)  (Val.negl (eval_extend ars@ (pid, r2)  x)) m pid)) m ifo eaw
     (** Logical, shifted register *)
     | Pand W rd r1 r2 s pid =>
-        MemSimNext ((ars@ (pid , rd)  <- (Val.and ars@@pid@@>r1 (eval_shift_op_int ars@ (pid , r2)  s)))) m
+        MemSimNext ((ars@ (pid , rd)  <- (Val.and ars@@pid@@>r1 (eval_shift_op_int ars@ (pid , r2)  s)))) m ifo eaw
     | Pand X rd r1 r2 s pid =>
-        MemSimNext ((ars@ (pid , rd)  <- (Val.andl ars@@@pid@@@>r1 (eval_shift_op_long ars@ (pid , r2)  s)))) m
+        MemSimNext ((ars@ (pid , rd)  <- (Val.andl ars@@@pid@@@>r1 (eval_shift_op_long ars@ (pid , r2)  s)))) m ifo eaw
     | Pbic W rd r1 r2 s pid =>
-        MemSimNext ((ars@ (pid , rd)  <- (Val.and ars@@pid@@>r1 (Val.notint (eval_shift_op_int ars@ (pid , r2)  s))))) m
+        MemSimNext ((ars@ (pid , rd)  <- (Val.and ars@@pid@@>r1 (Val.notint (eval_shift_op_int ars@ (pid , r2)  s))))) m ifo eaw
     | Pbic X rd r1 r2 s pid =>
-        MemSimNext ((ars@ (pid , rd)  <- (Val.andl ars@@@pid@@@>r1 (Val.notl (eval_shift_op_long ars@ (pid , r2)  s))))) m
+        MemSimNext ((ars@ (pid , rd)  <- (Val.andl ars@@@pid@@@>r1 (Val.notl (eval_shift_op_long ars@ (pid , r2)  s))))) m ifo eaw
     | Peon W rd r1 r2 s pid =>
-        MemSimNext ((ars@ (pid , rd)  <- (Val.xor ars@@pid@@>r1 (Val.notint (eval_shift_op_int ars@ (pid , r2)  s))))) m
+        MemSimNext ((ars@ (pid , rd)  <- (Val.xor ars@@pid@@>r1 (Val.notint (eval_shift_op_int ars@ (pid , r2)  s))))) m ifo eaw
     | Peon X rd r1 r2 s pid =>
-        MemSimNext ((ars@ (pid , rd)  <- (Val.xorl ars@@@pid@@@>r1 (Val.notl (eval_shift_op_long ars@ (pid , r2)  s))))) m
+        MemSimNext ((ars@ (pid , rd)  <- (Val.xorl ars@@@pid@@@>r1 (Val.notl (eval_shift_op_long ars@ (pid , r2)  s))))) m ifo eaw
     | Peor W rd r1 r2 s pid =>
-        MemSimNext ((ars@ (pid , rd)  <- (Val.xor ars@@pid@@>r1 (eval_shift_op_int ars@ (pid , r2)  s)))) m
+        MemSimNext ((ars@ (pid , rd)  <- (Val.xor ars@@pid@@>r1 (eval_shift_op_int ars@ (pid , r2)  s)))) m ifo eaw
     | Peor X rd r1 r2 s pid =>
-        MemSimNext ((ars@ (pid , rd)  <- (Val.xorl ars@@@pid@@@>r1 (eval_shift_op_long ars@ (pid , r2)  s)))) m
+        MemSimNext ((ars@ (pid , rd)  <- (Val.xorl ars@@@pid@@@>r1 (eval_shift_op_long ars@ (pid , r2)  s)))) m ifo eaw
     | Porr W rd r1 r2 s pid =>
-        MemSimNext ((ars@ (pid , rd)  <- (Val.or ars@@pid@@>r1 (eval_shift_op_int ars@ (pid , r2)  s)))) m
+        MemSimNext ((ars@ (pid , rd)  <- (Val.or ars@@pid@@>r1 (eval_shift_op_int ars@ (pid , r2)  s)))) m ifo eaw
     | Porr X rd r1 r2 s pid =>
-        MemSimNext ((ars@ (pid , rd)  <- (Val.orl ars@@@pid@@@>r1 (eval_shift_op_long ars@ (pid , r2)  s)))) m
+        MemSimNext ((ars@ (pid , rd)  <- (Val.orl ars@@@pid@@@>r1 (eval_shift_op_long ars@ (pid , r2)  s)))) m ifo eaw
     | Porn W rd r1 r2 s pid =>
-        MemSimNext ((ars@ (pid , rd)  <- (Val.or ars@@pid@@>r1 (Val.notint (eval_shift_op_int ars@ (pid , r2)  s))))) m
+        MemSimNext ((ars@ (pid , rd)  <- (Val.or ars@@pid@@>r1 (Val.notint (eval_shift_op_int ars@ (pid , r2)  s))))) m ifo eaw
     | Porn X rd r1 r2 s pid =>
-        MemSimNext ((ars@ (pid , rd)  <- (Val.orl ars@@@pid@@@>r1 (Val.notl (eval_shift_op_long ars@ (pid , r2)  s))))) m
+        MemSimNext ((ars@ (pid , rd)  <- (Val.orl ars@@@pid@@@>r1 (Val.notl (eval_shift_op_long ars@ (pid , r2)  s))))) m ifo eaw
     | Ptst W r1 r2 s pid =>
-        MemSimNext ((compare_int ars (Val.and ars@@pid@@>r1 (eval_shift_op_int ars@ (pid , r2)  s)) (Vint Int.zero) m pid)) m
+        MemSimNext ((compare_int ars (Val.and ars@@pid@@>r1 (eval_shift_op_int ars@ (pid , r2)  s)) (Vint Int.zero) m pid)) m ifo eaw
     | Ptst X r1 r2 s pid =>
-        MemSimNext ((compare_long ars (Val.andl ars@@@pid@@@>r1 (eval_shift_op_long ars@ (pid , r2)  s)) (Vlong Int64.zero) m pid)) m
+        MemSimNext ((compare_long ars (Val.andl ars@@@pid@@@>r1 (eval_shift_op_long ars@ (pid , r2)  s)) (Vlong Int64.zero) m pid)) m ifo eaw
     (*** Variable shifts *)
     | Pasrv W rd r1 r2 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.shr ars@ (pid, r1)  ars@ (pid, r2) ))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.shr ars@ (pid, r1)  ars@ (pid, r2) ))) m ifo eaw
     | Pasrv X rd r1 r2 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.shrl ars@ (pid, r1)  ars@ (pid, r2) ))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.shrl ars@ (pid, r1)  ars@ (pid, r2) ))) m ifo eaw
     | Plslv W rd r1 r2 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.shl ars@ (pid, r1)  ars@ (pid, r2) ))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.shl ars@ (pid, r1)  ars@ (pid, r2) ))) m ifo eaw
     | Plslv X rd r1 r2 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.shll ars@ (pid, r1)  ars@ (pid, r2) ))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.shll ars@ (pid, r1)  ars@ (pid, r2) ))) m ifo eaw
     | Plsrv W rd r1 r2 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.shru ars@ (pid, r1)  ars@ (pid, r2) ))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.shru ars@ (pid, r1)  ars@ (pid, r2) ))) m ifo eaw
     | Plsrv X rd r1 r2 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.shrlu ars@ (pid, r1)  ars@ (pid, r2) ))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.shrlu ars@ (pid, r1)  ars@ (pid, r2) ))) m ifo eaw
     | Prorv W rd r1 r2 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.ror ars@ (pid, r1)  ars@ (pid, r2) ))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.ror ars@ (pid, r1)  ars@ (pid, r2) ))) m ifo eaw
     | Prorv X rd r1 r2 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.rorl ars@ (pid, r1)  ars@ (pid, r2) ))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.rorl ars@ (pid, r1)  ars@ (pid, r2) ))) m ifo eaw
     (** Conditional data processing *)
     | Pcsel rd r1 r2 cond pid =>
         let v :=
@@ -639,7 +693,7 @@ Definition eval_memsim_instr (f: function) (i: instruction) (ars: allregsets) (m
             | Some false => ars@ (pid, r2) 
             | None => Vundef
             end in
-        MemSimNext ((ars@ (pid, rd)  <- v)) m
+        MemSimNext ((ars@ (pid, rd)  <- v)) m ifo eaw
     | Pcset rd cond pid =>
         let v :=
             match eval_testcond cond ars pid with
@@ -647,127 +701,127 @@ Definition eval_memsim_instr (f: function) (i: instruction) (ars: allregsets) (m
             | Some false => Vint Int.zero
             | None => Vundef
             end in
-        MemSimNext ((ars@ (pid, rd)  <- v)) m
+        MemSimNext ((ars@ (pid, rd)  <- v)) m ifo eaw
     (** Integer multiply/divide *)
     | Pmadd W rd r1 r2 r3 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.add ars@@pid@@>r3 (Val.mul ars@ (pid, r1)  ars@ (pid, r2) )))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.add ars@@pid@@>r3 (Val.mul ars@ (pid, r1)  ars@ (pid, r2) )))) m ifo eaw
     | Pmadd X rd r1 r2 r3 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.addl ars@@@pid@@@>r3 (Val.mull ars@ (pid, r1)  ars@ (pid, r2) )))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.addl ars@@@pid@@@>r3 (Val.mull ars@ (pid, r1)  ars@ (pid, r2) )))) m ifo eaw
     | Pmsub W rd r1 r2 r3 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.sub ars@@pid@@>r3 (Val.mul ars@ (pid, r1)  ars@ (pid, r2) )))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.sub ars@@pid@@>r3 (Val.mul ars@ (pid, r1)  ars@ (pid, r2) )))) m ifo eaw
     | Pmsub X rd r1 r2 r3 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.subl ars@@@pid@@@>r3 (Val.mull ars@ (pid, r1)  ars@ (pid, r2) )))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.subl ars@@@pid@@@>r3 (Val.mull ars@ (pid, r1)  ars@ (pid, r2) )))) m ifo eaw
     | Psmulh rd r1 r2 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.mullhs ars@ (pid, r1)  ars@ (pid, r2) ))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.mullhs ars@ (pid, r1)  ars@ (pid, r2) ))) m ifo eaw
     | Pumulh rd r1 r2 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.mullhu ars@ (pid, r1)  ars@ (pid, r2) ))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.mullhu ars@ (pid, r1)  ars@ (pid, r2) ))) m ifo eaw
     | Psdiv W rd r1 r2 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.maketotal (Val.divs ars@ (pid, r1)  ars@ (pid, r2) )))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.maketotal (Val.divs ars@ (pid, r1)  ars@ (pid, r2) )))) m ifo eaw
     | Psdiv X rd r1 r2 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.maketotal (Val.divls ars@ (pid, r1)  ars@ (pid, r2) )))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.maketotal (Val.divls ars@ (pid, r1)  ars@ (pid, r2) )))) m ifo eaw
     | Pudiv W rd r1 r2 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.maketotal (Val.divu ars@ (pid, r1)  ars@ (pid, r2) )))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.maketotal (Val.divu ars@ (pid, r1)  ars@ (pid, r2) )))) m ifo eaw
     | Pudiv X rd r1 r2 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.maketotal (Val.divlu ars@ (pid, r1)  ars@ (pid, r2) )))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.maketotal (Val.divlu ars@ (pid, r1)  ars@ (pid, r2) )))) m ifo eaw
     (** Floating-point loads and stores *)
-    | Pldrs rd a pid =>
-        exec_load Mfloat32 (fun v => v) a rd ars pid m
-    | Pldrd rd a pid =>
-        exec_load Mfloat64 (fun v => v) a rd ars pid m
-    | Pldrd_a rd a pid =>
-        exec_load Many64 (fun v => v) a rd ars pid m
-    | Pstrs r a pid =>
-        exec_store Mfloat32 a ars@ (pid, r ) ars pid m
-    | Pstrd r a pid =>
-        exec_store Mfloat64 a ars@ (pid, r ) ars pid m
-    | Pstrd_a r a pid =>
-        exec_store Many64 a ars@ (pid, r ) ars pid m
+    | Pldrs rd a pid txid =>
+        read_ack Mfloat32 (fun v => v) txid rd ars pid m ifo eaw
+    | Pldrd rd a pid txid =>
+        read_ack Mfloat64 (fun v => v) txid rd ars pid m ifo eaw
+    | Pldrd_a rd a pid txid =>
+        read_ack Many64 (fun v => v) txid rd ars pid m ifo eaw
+    | Pstrs a pid txid =>
+        serialize_write Mfloat32 txid ars pid m ifo eaw
+    | Pstrd a pid txid =>
+        serialize_write Mfloat64 txid ars pid m ifo eaw
+    | Pstrd_a a pid txid =>
+        serialize_write Many64 txid ars pid m ifo eaw
     (** Floating-point move *)
     | Pfmov rd r1 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (ars@ (pid, r1) ))) m
+        MemSimNext ((ars@ (pid, rd)  <- (ars@ (pid, r1) ))) m  ifo eaw
     | Pfmovimms rd f pid =>
-        MemSimNext ((ars@ (pid, X16) <- Vundef @(pid, rd) <- (Vsingle f))) m
+        MemSimNext ((ars@ (pid, X16) <- Vundef @(pid, rd) <- (Vsingle f))) m ifo eaw
     | Pfmovimmd rd f pid =>
-        MemSimNext ((ars@ (pid, X16) <- Vundef @(pid, rd) <- (Vfloat f))) m
+        MemSimNext ((ars@ (pid, X16) <- Vundef @(pid, rd) <- (Vfloat f))) m ifo eaw
     | Pfmovi S rd r1 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (float32_of_bits ars@@pid@@>r1))) m
+        MemSimNext ((ars@ (pid, rd)  <- (float32_of_bits ars@@pid@@>r1))) m ifo eaw
     | Pfmovi D rd r1 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (float64_of_bits ars@@@pid@@@>r1))) m
+        MemSimNext ((ars@ (pid, rd)  <- (float64_of_bits ars@@@pid@@@>r1))) m ifo eaw
     (** Floating-point conversions *)
     | Pfcvtds rd r1 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.floatofsingle ars@ (pid, r1) ))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.floatofsingle ars@ (pid, r1) ))) m ifo eaw
     | Pfcvtsd rd r1 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.singleoffloat ars@ (pid, r1) ))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.singleoffloat ars@ (pid, r1) ))) m ifo eaw
     | Pfcvtzs W S rd r1 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.maketotal (Val.intofsingle ars@ (pid, r1) )))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.maketotal (Val.intofsingle ars@ (pid, r1) )))) m ifo eaw
     | Pfcvtzs W D rd r1 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.maketotal (Val.intoffloat ars@ (pid, r1) )))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.maketotal (Val.intoffloat ars@ (pid, r1) )))) m ifo eaw
     | Pfcvtzs X S rd r1 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.maketotal (Val.longofsingle ars@ (pid, r1) )))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.maketotal (Val.longofsingle ars@ (pid, r1) )))) m ifo eaw
     | Pfcvtzs X D rd r1 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.maketotal (Val.longoffloat ars@ (pid, r1) )))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.maketotal (Val.longoffloat ars@ (pid, r1) )))) m ifo eaw
     | Pfcvtzu W S rd r1 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.maketotal (Val.intuofsingle ars@ (pid, r1) )))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.maketotal (Val.intuofsingle ars@ (pid, r1) )))) m ifo eaw
     | Pfcvtzu W D rd r1 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.maketotal (Val.intuoffloat ars@ (pid, r1) )))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.maketotal (Val.intuoffloat ars@ (pid, r1) )))) m ifo eaw
     | Pfcvtzu X S rd r1 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.maketotal (Val.longuofsingle ars@ (pid, r1) )))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.maketotal (Val.longuofsingle ars@ (pid, r1) )))) m ifo eaw
     | Pfcvtzu X D rd r1 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.maketotal (Val.longuoffloat ars@ (pid, r1) )))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.maketotal (Val.longuoffloat ars@ (pid, r1) )))) m ifo eaw
     | Pscvtf S W rd r1 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.maketotal (Val.singleofint ars@ (pid, r1) )))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.maketotal (Val.singleofint ars@ (pid, r1) )))) m ifo eaw
     | Pscvtf D W rd r1 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.maketotal (Val.floatofint ars@ (pid, r1) )))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.maketotal (Val.floatofint ars@ (pid, r1) )))) m ifo eaw
     | Pscvtf S X rd r1 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.maketotal (Val.singleoflong ars@ (pid, r1) )))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.maketotal (Val.singleoflong ars@ (pid, r1) )))) m ifo eaw
     | Pscvtf D X rd r1 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.maketotal (Val.floatoflong ars@ (pid, r1) )))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.maketotal (Val.floatoflong ars@ (pid, r1) )))) m ifo eaw
     | Pucvtf S W rd r1 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.maketotal (Val.singleofintu ars@ (pid, r1) )))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.maketotal (Val.singleofintu ars@ (pid, r1) )))) m ifo eaw
     | Pucvtf D W rd r1 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.maketotal (Val.floatofintu ars@ (pid, r1) )))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.maketotal (Val.floatofintu ars@ (pid, r1) )))) m ifo eaw
     | Pucvtf S X rd r1 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.maketotal (Val.singleoflongu ars@ (pid, r1) )))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.maketotal (Val.singleoflongu ars@ (pid, r1) )))) m ifo eaw
     | Pucvtf D X rd r1 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.maketotal (Val.floatoflongu ars@ (pid, r1) )))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.maketotal (Val.floatoflongu ars@ (pid, r1) )))) m ifo eaw
     (** Floating-point arithmetic *)
     | Pfabs S rd r1 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.absfs ars@ (pid, r1) ))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.absfs ars@ (pid, r1) ))) m ifo eaw
     | Pfabs D rd r1 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.absf ars@ (pid, r1) ))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.absf ars@ (pid, r1) ))) m ifo eaw
     | Pfneg S rd r1 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.negfs ars@ (pid, r1) ))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.negfs ars@ (pid, r1) ))) m ifo eaw
     | Pfneg D rd r1 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.negf ars@ (pid, r1) ))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.negf ars@ (pid, r1) ))) m ifo eaw
     | Pfadd S rd r1 r2 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.addfs ars@ (pid, r1)  ars@ (pid, r2) ))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.addfs ars@ (pid, r1)  ars@ (pid, r2) ))) m ifo eaw
     | Pfadd D rd r1 r2 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.addf ars@ (pid, r1)  ars@ (pid, r2) ))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.addf ars@ (pid, r1)  ars@ (pid, r2) ))) m ifo eaw
     | Pfdiv S rd r1 r2 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.divfs ars@ (pid, r1)  ars@ (pid, r2) ))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.divfs ars@ (pid, r1)  ars@ (pid, r2) ))) m ifo eaw
     | Pfdiv D rd r1 r2 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.divf ars@ (pid, r1)  ars@ (pid, r2) ))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.divf ars@ (pid, r1)  ars@ (pid, r2) ))) m ifo eaw
     | Pfmul S rd r1 r2 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.mulfs ars@ (pid, r1)  ars@ (pid, r2) ))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.mulfs ars@ (pid, r1)  ars@ (pid, r2) ))) m ifo eaw
     | Pfmul D rd r1 r2 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.mulf ars@ (pid, r1)  ars@ (pid, r2) ))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.mulf ars@ (pid, r1)  ars@ (pid, r2) ))) m ifo eaw
     | Pfnmul S rd r1 r2 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.negfs (Val.mulfs ars@ (pid, r1)  ars@ (pid, r2) )))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.negfs (Val.mulfs ars@ (pid, r1)  ars@ (pid, r2) )))) m ifo eaw
     | Pfnmul D rd r1 r2 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.negf (Val.mulf ars@ (pid, r1)  ars@ (pid, r2) )))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.negf (Val.mulf ars@ (pid, r1)  ars@ (pid, r2) )))) m ifo eaw
     | Pfsub S rd r1 r2 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.subfs ars@ (pid, r1)  ars@ (pid, r2) ))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.subfs ars@ (pid, r1)  ars@ (pid, r2) ))) m ifo eaw
     | Pfsub D rd r1 r2 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.subf ars@ (pid, r1)  ars@ (pid, r2) ))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.subf ars@ (pid, r1)  ars@ (pid, r2) ))) m ifo eaw
     (** Floating-point comparison *)
     | Pfcmp S r1 r2 pid =>
-        MemSimNext ((compare_single ars ars@ (pid, r1)  ars@ (pid, r2) pid )) m
+        MemSimNext ((compare_single ars ars@ (pid, r1)  ars@ (pid, r2) pid )) m ifo eaw
     | Pfcmp D r1 r2 pid =>
-        MemSimNext ((compare_float ars ars@ (pid, r1)  ars@ (pid, r2) pid )) m
+        MemSimNext ((compare_float ars ars@ (pid, r1)  ars@ (pid, r2) pid )) m ifo eaw
     | Pfcmp0 S r1 pid =>
-        MemSimNext ((compare_single ars ars@ (pid, r1)  (Vsingle Float32.zero) pid)) m
+        MemSimNext ((compare_single ars ars@ (pid, r1)  (Vsingle Float32.zero) pid)) m ifo eaw
     | Pfcmp0 D r1 pid =>
-        MemSimNext ((compare_float ars ars@ (pid, r1)  (Vfloat Float.zero) pid)) m
+        MemSimNext ((compare_float ars ars@ (pid, r1)  (Vfloat Float.zero) pid)) m ifo eaw
     (** Floating-point conditional select *)
     | Pfsel rd r1 r2 cond pid =>
         let v :=
@@ -776,14 +830,14 @@ Definition eval_memsim_instr (f: function) (i: instruction) (ars: allregsets) (m
             | Some false => ars@ (pid, r2) 
             | None => Vundef
             end in
-        MemSimNext ((ars@ (pid, rd)  <- v)) m
+        MemSimNext ((ars@ (pid, rd)  <- v)) m ifo eaw
     (** Pseudo-instructions *)
     | Pallocframe sz pos pid =>
         let (m1, stk) := Mem.alloc m 0 sz in
         let sp := (Vptr stk Ptrofs.zero) in
         match Mem.storev Mint64 m1 (Val.offset_ptr sp pos) ars@ (pid, SP)  with
         | None => MemSimStuck
-        | Some m2 => MemSimNext ((ars @ (pid, X15) <- (ars@ (pid, SP) ) @(pid, SP) <- sp @(pid, X16) <- Vundef)) m2
+        | Some m2 => MemSimNext ((ars @ (pid, X15) <- (ars@ (pid, SP) ) @(pid, SP) <- sp @(pid, X16) <- Vundef)) m2  ifo eaw
         end
     | Pfreeframe sz pos pid =>
         match Mem.loadv Mint64 m (Val.offset_ptr ars@ (pid, SP)  pos) with
@@ -793,37 +847,37 @@ Definition eval_memsim_instr (f: function) (i: instruction) (ars: allregsets) (m
             | Vptr stk ofs =>
                 match Mem.free m stk 0 sz with
                 | None => MemSimStuck
-                | Some m' => MemSimNext ((ars@ (pid, SP)  <- v @(pid, X16) <- Vundef)) m'
+                | Some m' => MemSimNext ((ars@ (pid, SP)  <- v @(pid, X16) <- Vundef)) m'  ifo eaw
                 end
             | _ => MemSimStuck
             end
         end
     | Plabel lbl pid =>
-        MemSimNext ars m
+        MemSimNext ars m  ifo eaw
     | Ploadsymbol rd id pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Genv.symbol_address ge id Ptrofs.zero))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Genv.symbol_address ge id Ptrofs.zero))) m ifo eaw
     | Pcvtsw2x rd r1 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.longofint ars@ (pid, r1) ))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.longofint ars@ (pid, r1) ))) m ifo eaw
     | Pcvtuw2x rd r1 pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.longofintu ars@ (pid, r1) ))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.longofintu ars@ (pid, r1) ))) m ifo eaw
     | Pcvtx2w rd pid =>
-        MemSimNext ((ars@ (pid, rd)  <- (Val.loword ars@ (pid, rd) ))) m
+        MemSimNext ((ars@ (pid, rd)  <- (Val.loword ars@ (pid, rd) ))) m ifo eaw
     | Pbtbl r tbl pid =>
         match (ars@ (pid, X16)  <- Vundef)@(pid, r) with
         | Vint n =>
             match list_nth_z tbl (Int.unsigned n) with
             | None => MemSimStuck
-            | Some lbl => goto_label f lbl (ars@ (pid, X16) <- Vundef) pid m
+            | Some lbl => goto_label f lbl (ars@ (pid, X16) <- Vundef) pid m ifo eaw
             end
         | _ => MemSimStuck
         end
     | Pcfi_rel_offset _ pid =>
-        MemSimNext ars m
+        MemSimNext ars m ifo eaw
     | Pbuiltin ef args res pid => MemSimStuck    (**r treated specially below *)
     (** The following instructions and directives are not generated directly
         by Asmgen, so we do not model them. *)
-    | Pldp _ _ _ _ => MemSimStuck
-    | Pstp _ _ _ _  => MemSimStuck
+    | Pldp _ _ _ _ _ => MemSimStuck
+    | Pstp _ _  _ => MemSimStuck
     | Pcls _ _ _ _ => MemSimStuck
     | Pclz _ _ _ _ => MemSimStuck
     | Prev _ _ _ _ => MemSimStuck
@@ -837,9 +891,18 @@ Definition eval_memsim_instr (f: function) (i: instruction) (ars: allregsets) (m
     | Pfmax _ _ _ _ _ => MemSimStuck
     | Pfmin _ _ _ _ _ => MemSimStuck
     | Pnop _ => MemSimStuck
-    | Pincpc pid => MemSimNext (ars@(pid, PC) <- (Val.offset_ptr ars@(pid,PC) Ptrofs.one)) m
+    | Pincpc pid => MemSimNext (ars@(pid, PC) <- (Val.offset_ptr ars@(pid,PC) Ptrofs.one)) m ifo eaw
     | Pcfi_adjust _ _ =>
         MemSimStuck
+    | Memfence _ => MemSimNext ars m ifo eaw
+    | EarlyAck txid pid =>
+        MemSimNext ars m ifo (early_ack_write txid pid eaw ifo)
+    | WriteRequest txid pid a r =>
+        MemSimNext ars m (Trmap.set txid (Some (eval_addressing a ars pid, ars@ (pid, r))) ifo ) eaw
+    | WriteAck txid pid =>
+        MemSimNext ars m (write_ack txid pid ifo) eaw
+    | ReadRequest txid pid a =>
+        MemSimNext ars m (read_request a txid ars pid ifo) eaw
     end.
 
 
@@ -855,150 +918,164 @@ End RELSEM.
 (** asm to mem sim - turns ISA into a series of memsim semantics*)
 (** separates most operations into the actual operation and incrementing the PC - this lets us reorder more easily since we 
 dont update the PC in every operation*)
+(** Memory accesses are split into multiple stages *)
+
+Definition translate_write(asm_i: Asm.instruction)(pid: processor_id)(txid: mem_transaction_id): list instruction :=
+    match asm_i with 
+    | Asm.Pstrd_a r a => ([WriteRequest txid pid a r; Pstrd_a a pid txid; WriteAck txid pid; Pincpc pid])                               (**r store float64 *)
+    | Asm.Pstrd r a => ([WriteRequest txid pid a r; Pstrd a pid txid; WriteAck txid pid; Pincpc pid])                               (**r store float64 *)
+    | Asm.Pstrw r a => ([WriteRequest txid pid a r; Pstrw a pid txid; WriteAck txid pid; Pincpc pid ])                               (**r store int32 *)
+    | Asm.Pstrw_a r a => ([WriteRequest txid pid a r; Pstrw_a a pid txid; WriteAck txid pid; Pincpc pid] )                            (**r store int32 as any32 *)
+    | Asm.Pstrx r a => ([WriteRequest txid pid a r; Pstrx a pid txid;  WriteAck txid pid; Pincpc pid] )                                (**r store int64 *)
+    | Asm.Pstrx_a r a => ([WriteRequest txid pid a r; Pstrx_a a pid txid;  WriteAck txid pid; Pincpc pid ])                             (**r store int64 as any64 *)
+    | Asm.Pstrb r a => ([WriteRequest txid pid a r; Pstrb a pid txid;  WriteAck txid pid; Pincpc pid ])                                  (**r store int8 *)
+    | Asm.Pstrh r a => ([WriteRequest txid pid a r; Pstrh a pid txid;  WriteAck txid pid; Pincpc pid])                                (**r store int16 *)
+    | Asm.Pstrs r a => ([WriteRequest txid pid a r; Pstrs a pid txid;  WriteAck txid pid; Pincpc pid]) 
+    | _ => []
+    end.
 
 (** translates loads/stores into memory dispatches and acknowledgements*)
 (** Takes in a processor id*)
-Definition asm_to_memsim (asm_i: Asm.instruction) (pid: processor_id): list instruction := 
+Definition asm_to_memsim (asm_i: Asm.instruction) (pid: processor_id)(txid: mem_transaction_id): list instruction := 
     match asm_i with 
-    | Asm.Pb lbl    => [Pb lbl pid]                                               (**r branch *)
-    | Asm.Pbc c lbl  => [Pbc c lbl pid; Pincpc pid]                             (**r conditional branch *)
-    | Asm.Pbl id sg  => [Pbl id sg pid]                              (**r jump to function and link *)
-    | Asm.Pbs id sg => [Pbs id sg pid]                                  (**r jump to function *)
-    | Asm.Pblr r sg => [Pblr r sg pid]                                 (**r indirect jump and link *)
-    | Asm.Pbr r sg => [Pbr r sg pid]                                   (**r indirect jump *)
-    | Asm.Pret r => [Pret r pid]                                        (**r return *)
-    | Asm.Pcbnz sz r lbl => [Pcbnz sz r lbl pid; Pincpc pid]                       (**r branch if not zero *)
-    | Asm.Pcbz sz r lbl => [Pcbz sz r lbl pid; Pincpc pid]                         (**r branch if zero *)
-    | Asm.Ptbnz sz r n lbl => [Ptbnz sz r n lbl pid; Pincpc pid]                   (**r branch if bit n is not zero *)
-    | Asm.Ptbz sz r n lbl => [Ptbz sz r n lbl pid; Pincpc pid]                     (**r branch if bit n is zero *)
-    | Asm.Pldrw rd a => [Pldrw rd a pid; Pincpc pid]                               (**r load int32 *)
-    | Asm.Pldrw_a rd a => [Pldrw_a rd a pid; Pincpc pid]                           (**r load int32 as any32 *)
-    | Asm.Pldrx rd a => [Pldrx rd a pid; Pincpc pid]                               (**r load int64 *)
-    | Asm.Pldrx_a rd a => [Pldrx_a rd a pid; Pincpc pid]                           (**r load int64 as any64 *)
-    | Asm.Pldrb sz rd a => [Pldrb sz rd a pid; Pincpc pid]                         (**r load int8, zero-extend *)
-    | Asm.Pldrsb sz rd a => [Pldrsb sz rd a pid; Pincpc pid]                       (**r load int8, sign-extend *)
-    | Asm.Pldrh sz rd a => [Pldrh sz rd a pid; Pincpc pid]                         (**r load int16, zero-extend *)
-    | Asm.Pldrsh sz rd a => [Pldrsh sz rd a pid; Pincpc pid]                       (**r load int16, sign-extend *)
-    | Asm.Pldrzw rd a => [Pldrzw rd a pid; Pincpc pid]                             (**r load int32, zero-extend to int64 *)
-    | Asm.Pldrsw rd a => [Pldrsw rd a pid; Pincpc pid]                             (**r load int32, sign-extend to int64 *)
-    | Asm.Pldp rd1 rd2 a => [Pldp rd1 rd2 a pid; Pincpc pid]                       (**r load two int64 *)
-    | Asm.Pstrw rs a => [Pstrw rs a pid; Pincpc pid]                               (**r store int32 *)
-    | Asm.Pstrw_a rs a => [Pstrw_a rs a pid; Pincpc pid]                           (**r store int32 as any32 *)
-    | Asm.Pstrx rs a => [Pstrx rs a pid; Pincpc pid]                               (**r store int64 *)
-    | Asm.Pstrx_a rs a => [Pstrx_a rs a pid; Pincpc pid]                           (**r store int64 as any64 *)
-    | Asm.Pstrb rs a => [Pstrb rs a pid; Pincpc pid]                               (**r store int8 *)
-    | Asm.Pstrh rs a => [Pstrh rs a pid; Pincpc pid]                               (**r store int16 *)
-    | Asm.Pstp rs1 rs2 a => [Pstp rs1 rs2 a pid; Pincpc pid]                       (**r store two int64 *)
-    | Asm.Paddimm sz rd r1 n => [Paddimm sz rd r1 n pid; Pincpc pid]               (**r addition *)
-    | Asm.Psubimm sz rd r1 n => [Psubimm sz rd r1 n pid; Pincpc pid]               (**r subtraction *)
-    | Asm.Pcmpimm sz r1 n => [Pcmpimm sz r1 n pid; Pincpc pid]                     (**r compare *)
-    | Asm.Pcmnimm sz r1 n => [Pcmnimm sz r1 n pid; Pincpc pid]                     (**r compare negative *)
-    | Asm.Pmov rd r1 => [Pmov rd r1 pid; Pincpc pid]                               (**r move integer register *)
-    | Asm.Pandimm sz rd r1 n => [Pandimm sz rd r1 n pid; Pincpc pid]               (**r and *)
-    | Asm.Peorimm sz rd r1 n => [Peorimm sz rd r1 n pid; Pincpc pid]               (**r xor *)
-    | Asm.Porrimm sz rd r1 n => [Porrimm sz rd r1 n pid; Pincpc pid]               (**r or *)
-    | Asm.Ptstimm sz r1 n => [Ptstimm sz r1 n pid; Pincpc pid]                     (**r and, then set flags *)
-    | Asm.Pmovz sz rd n pos => [Pmovz sz rd n pos pid; Pincpc pid]                 (**r move wide immediate *)
-    | Asm.Pmovn sz rd n pos => [Pmovn sz rd n pos pid; Pincpc pid]
-    | Asm.Pmovk sz rd n pos => [Pmovk sz rd n pos pid; Pincpc pid]
-    | Asm.Padrp rd id ofs => [Padrp rd id ofs pid; Pincpc pid]                     (**r PC-relative addressing *)
-    | Asm.Paddadr rd r1 id ofs => [Paddadr rd r1 id ofs pid; Pincpc pid]
-    | Asm.Psbfiz sz rd r1 r s => [Psbfiz sz rd r1 r s pid; Pincpc pid]              (**r Bit-field operations *)
-    | Asm.Psbfx sz rd r1 r s => [Psbfx sz rd r1 r s pid; Pincpc pid]
-    | Asm.Pubfiz sz rd r1 r s => [Pubfiz sz rd r1 r s pid; Pincpc pid]
-    | Asm.Pubfx sz rd r1 r s => [Pubfx sz rd r1 r s pid; Pincpc pid]
-    | Asm.Padd sz rd r1 r2 s => [Padd sz rd r1 r2 s pid; Pincpc pid]                (**r Integer arithmetic, shifted register *)
-    | Asm.Psub sz rd r1 r2 s => [Psub sz rd r1 r2 s pid; Pincpc pid]
-    | Asm.Pcmp sz r1 r2 s => [Pcmp sz r1 r2 s pid; Pincpc pid]
-    | Asm.Pcmn sz r1 r2 s => [Pcmn sz r1 r2 s pid; Pincpc pid]
-    | Asm.Paddext rd r1 r2 x => [Paddext rd r1 r2 x pid; Pincpc pid]                (**r Integer arithmetic, extending register *)
-    | Asm.Psubext rd r1 r2 x => [Psubext rd r1 r2 x pid; Pincpc pid]
-    | Asm.Pcmpext r1 r2 x => [Pcmpext r1 r2 x pid; Pincpc pid]
-    | Asm.Pcmnext r1 r2 x => [Pcmnext r1 r2 x pid; Pincpc pid]
-    | Asm.Pand sz rd r1 r2 s => [Pand sz rd r1 r2 s pid; Pincpc pid]                (**r Logical, shifted register *)
-    | Asm.Pbic sz rd r1 r2 s => [Pbic sz rd r1 r2 s pid; Pincpc pid]
-    | Asm.Peon sz rd r1 r2 s => [Peon sz rd r1 r2 s pid; Pincpc pid]
-    | Asm.Peor sz rd r1 r2 s => [Peor sz rd r1 r2 s pid; Pincpc pid]
-    | Asm.Porr sz rd r1 r2 s => [Porr sz rd r1 r2 s pid; Pincpc pid]
-    | Asm.Porn sz rd r1 r2 s => [Porn sz rd r1 r2 s pid; Pincpc pid]
-    | Asm.Ptst sz r1 r2 s => [Ptst sz r1 r2 s pid; Pincpc pid]                      (**r and, then set flags *)
-    | Asm.Pasrv sz rd r1 r2 => [Pasrv sz rd r1 r2 pid; Pincpc pid]                  (**r Variable shifts *)
-    | Asm.Plslv sz rd r1 r2 => [Plslv sz rd r1 r2 pid; Pincpc pid]
-    | Asm.Plsrv sz rd r1 r2 => [Plsrv sz rd r1 r2 pid; Pincpc pid]
-    | Asm.Prorv sz rd r1 r2 => [Prorv sz rd r1 r2 pid; Pincpc pid]
-    | Asm.Pcls sz rd r1 => [Pcls sz rd r1 pid; Pincpc pid]                          (**r Bit operations *)
-    | Asm.Pclz sz rd r1 => [Pclz sz rd r1 pid; Pincpc pid]
-    | Asm.Prev sz rd r1 => [Prev sz rd r1 pid; Pincpc pid]
-    | Asm.Prev16 sz rd r1 => [Prev16 sz rd r1 pid; Pincpc pid]
-    | Asm.Prbit sz rd r1 => [Prbit sz rd r1 pid; Pincpc pid]
-    | Asm.Pcsel rd r1 r2 c => [Pcsel rd r1 r2 c pid; Pincpc pid]                    (**r Conditional data processing *)
-    | Asm.Pcset rd c => [Pcset rd c pid; Pincpc pid]
-    | Asm.Pmadd sz rd r1 r2 r3 => [Pmadd sz rd r1 r2 r3 pid; Pincpc pid]            (**r Integer multiply/divide *)
-    | Asm.Pmsub sz rd r1 r2 r3 => [Pmsub sz rd r1 r2 r3 pid; Pincpc pid]
-    | Asm.Psmulh rd r1 r2 => [Psmulh rd r1 r2 pid; Pincpc pid]
-    | Asm.Pumulh rd r1 r2 => [Pumulh rd r1 r2 pid; Pincpc pid]
-    | Asm.Psdiv sz rd r1 r2 => [Psdiv sz rd r1 r2 pid; Pincpc pid]
-    | Asm.Pudiv sz rd r1 r2 => [Pudiv sz rd r1 r2 pid; Pincpc pid]
-    | Asm.Pldrs rd a => [Pldrs rd a pid; Pincpc pid]                                (**r Floating-point loads and stores *)
-    | Asm.Pldrd rd a => [Pldrd rd a pid; Pincpc pid]
-    | Asm.Pldrd_a rd a => [Pldrd_a rd a pid; Pincpc pid]
-    | Asm.Pstrs rs a => [Pstrs rs a pid; Pincpc pid]
-    | Asm.Pstrd rs a => [Pstrd rs a pid; Pincpc pid]
-    | Asm.Pstrd_a rs a => [Pstrd_a rs a pid; Pincpc pid]
-    | Asm.Pfmov rd r1 => [Pfmov rd r1 pid; Pincpc pid]                              (**r Floating-point move *)
-    | Asm.Pfmovimms rd f => [Pfmovimms rd f pid; Pincpc pid]
-    | Asm.Pfmovimmd rd f => [Pfmovimmd rd f pid; Pincpc pid]
-    | Asm.Pfmovi fsz rd r1 => [Pfmovi fsz rd r1 pid; Pincpc pid]
-    | Asm.Pfcvtds rd r1 => [Pfcvtds rd r1 pid; Pincpc pid]                          (**r Floating-point conversions *)
-    | Asm.Pfcvtsd rd r1 => [Pfcvtsd rd r1 pid; Pincpc pid]
-    | Asm.Pfcvtzs isz fsz rd r1 => [Pfcvtzs isz fsz rd r1 pid; Pincpc pid]
-    | Asm.Pfcvtzu isz fsz rd r1 => [Pfcvtzu isz fsz rd r1 pid; Pincpc pid]
-    | Asm.Pscvtf fsz isz rd r1 => [Pscvtf fsz isz rd r1 pid; Pincpc pid]
-    | Asm.Pucvtf fsz isz rd r1 => [Pucvtf fsz isz rd r1 pid; Pincpc pid]
-    | Asm.Pfabs sz rd r1 => [Pfabs sz rd r1 pid; Pincpc pid]                        (**r Floating-point arithmetic *)
-    | Asm.Pfneg sz rd r1 => [Pfneg sz rd r1 pid; Pincpc pid]
-    | Asm.Pfsqrt sz rd r1 => [Pfsqrt sz rd r1 pid; Pincpc pid]
-    | Asm.Pfadd sz rd r1 r2 => [Pfadd sz rd r1 r2 pid; Pincpc pid]
-    | Asm.Pfdiv sz rd r1 r2 => [Pfdiv sz rd r1 r2 pid; Pincpc pid]
-    | Asm.Pfmul sz rd r1 r2 => [Pfmul sz rd r1 r2 pid; Pincpc pid]
-    | Asm.Pfnmul sz rd r1 r2 => [Pfnmul sz rd r1 r2 pid; Pincpc pid]
-    | Asm.Pfsub sz rd r1 r2 => [Pfsub sz rd r1 r2 pid; Pincpc pid]
-    | Asm.Pfmadd sz rd r1 r2 r3 => [Pfmadd sz rd r1 r2 r3 pid; Pincpc pid]
-    | Asm.Pfmsub sz rd r1 r2 r3 => [Pfmsub sz rd r1 r2 r3 pid; Pincpc pid]
-    | Asm.Pfnmadd sz rd r1 r2 r3 => [Pfnmadd sz rd r1 r2 r3 pid; Pincpc pid]
-    | Asm.Pfnmsub sz rd r1 r2 r3 => [Pfnmsub sz rd r1 r2 r3 pid; Pincpc pid]
-    | Asm.Pfmax sz rd r1 r2 => [Pfmax sz rd r1 r2 pid; Pincpc pid]
-    | Asm.Pfmin sz rd r1 r2 => [Pfmin sz rd r1 r2 pid; Pincpc pid]
-    | Asm.Pfcmp sz r1 r2 => [Pfcmp sz r1 r2 pid; Pincpc pid]                        (**r Floating-point comparison *)
-    | Asm.Pfcmp0 sz r1 => [Pfcmp0 sz r1 pid; Pincpc pid]
-    | Asm.Pfsel rd r1 r2 cond => [Pfsel rd r1 r2 cond pid; Pincpc pid]              (**r Floating-point conditional select *)
-    | Asm.Pallocframe sz linkofs => [Pallocframe sz linkofs pid; Pincpc pid]       (**r Pseudo-instructions *)
-    | Asm.Pfreeframe sz linkofs => [Pfreeframe sz linkofs pid; Pincpc pid]
-    | Asm.Plabel lbl => [Plabel lbl pid; Pincpc pid]
-    | Asm.Ploadsymbol rd id => [Ploadsymbol rd id pid; Pincpc pid]
-    | Asm.Pcvtsw2x rd r1 => [Pcvtsw2x rd r1 pid; Pincpc pid]
-    | Asm.Pcvtuw2x rd r1 => [Pcvtuw2x rd r1 pid; Pincpc pid]
-    | Asm.Pcvtx2w rd => [Pcvtx2w rd pid; Pincpc pid]
-    | Asm.Pbtbl r1 tbl => [Pbtbl r1 tbl pid]
-    | Asm.Pbuiltin ef args res => [Pbuiltin ef args res pid; Pincpc pid]
-    | Asm.Pnop => [Pnop pid; Pincpc pid]                                              (**r no operation *)
-    | Asm.Pcfi_adjust ofs => [Pcfi_adjust ofs pid; Pincpc pid]
-    | Asm.Pcfi_rel_offset ofs => [Pcfi_rel_offset ofs pid; Pincpc pid]                                
+    | Asm.Pb lbl    => ([Pb lbl pid])                                               (**r branch *)
+    | Asm.Pbc c lbl  => ([Pbc c lbl pid; Pincpc pid])                             (**r conditional branch *)
+    | Asm.Pbl id sg  => ([Pbl id sg pid])                              (**r jump to function and link *)
+    | Asm.Pbs id sg => ([Pbs id sg pid])                                  (**r jump to function *)
+    | Asm.Pblr r sg => ([Pblr r sg pid])                                 (**r indirect jump and link *)
+    | Asm.Pbr r sg => ([Pbr r sg pid])                                   (**r indirect jump *)
+    | Asm.Pret r => ([Pret r pid])                                        (**r return *)
+    | Asm.Pcbnz sz r lbl => ([Pcbnz sz r lbl pid; Pincpc pid])                       (**r branch if not zero *)
+    | Asm.Pcbz sz r lbl => ([Pcbz sz r lbl pid; Pincpc pid])                         (**r branch if zero *)
+    | Asm.Ptbnz sz r n lbl => ([Ptbnz sz r n lbl pid; Pincpc pid])                   (**r branch if bit n is not zero *)
+    | Asm.Ptbz sz r n lbl => ([Ptbz sz r n lbl pid; Pincpc pid])                     (**r branch if bit n is zero *)
+    | Asm.Pldrw rd a => ([ReadRequest txid pid a; Pldrw rd a pid txid; Pincpc pid])                               (**r load int32 *)
+    | Asm.Pldrw_a rd a => ([ReadRequest txid pid a; Pldrw_a rd a pid txid; Pincpc pid])                           (**r load int32 as any32 *)
+    | Asm.Pldrx rd a => ([ReadRequest txid pid a; Pldrx rd a pid txid; Pincpc pid])                               (**r load int64 *)
+    | Asm.Pldrx_a rd a => ([ReadRequest txid pid a; Pldrx_a rd a pid txid; Pincpc pid])                           (**r load int64 as any64 *)
+    | Asm.Pldrb sz rd a => ([ReadRequest txid pid a; Pldrb sz rd a pid txid; Pincpc pid])                         (**r load int8, zero-extend *)
+    | Asm.Pldrsb sz rd a => ([ReadRequest txid pid a; Pldrsb sz rd a pid txid; Pincpc pid])                       (**r load int8, sign-extend *)
+    | Asm.Pldrh sz rd a => ([ReadRequest txid pid a; Pldrh sz rd a pid txid; Pincpc pid])                         (**r load int16, zero-extend *)
+    | Asm.Pldrsh sz rd a => ([ReadRequest txid pid a; Pldrsh sz rd a pid txid; Pincpc pid])                       (**r load int16, sign-extend *)
+    | Asm.Pldrzw rd a => ([ReadRequest txid pid a; Pldrzw rd a pid txid; Pincpc pid])                             (**r load int32, zero-extend to int64 *)
+    | Asm.Pldrsw rd a => ([ReadRequest txid pid a; Pldrsw rd a pid txid; Pincpc pid])                             (**r load int32, sign-extend to int64 *)
+    | Asm.Pldp rd1 rd2 a => ([ReadRequest txid pid a; Pldp rd1 rd2 a pid txid; Pincpc pid])                       (**r load two int64 *)
+    | Asm.Pstrw rs a => translate_write asm_i pid txid                             (**r store int32 *)
+    | Asm.Pstrw_a rs a => translate_write asm_i pid txid                         (**r store int32 as any32 *)
+    | Asm.Pstrx rs a => translate_write asm_i pid txid                           (**r store int64 *)
+    | Asm.Pstrx_a rs a => translate_write asm_i pid  txid                        (**r store int64 as any64 *)
+    | Asm.Pstrb rs a => translate_write asm_i pid txid                            (**r store int8 *)
+    | Asm.Pstrh rs a => translate_write asm_i pid txid                           (**r store int16 *)
+    | Asm.Pstp rs1 rs2 a => [Pstp a pid txid; Pincpc pid]                                                  (**r store two int64 - NOT MODELED BY COMPCERT *)
+    | Asm.Paddimm sz rd r1 n => ([Paddimm sz rd r1 n pid; Pincpc pid])               (**r addition *)
+    | Asm.Psubimm sz rd r1 n => ([Psubimm sz rd r1 n pid; Pincpc pid])               (**r subtraction *)
+    | Asm.Pcmpimm sz r1 n => ([Pcmpimm sz r1 n pid; Pincpc pid])                     (**r compare *)
+    | Asm.Pcmnimm sz r1 n => ([Pcmnimm sz r1 n pid; Pincpc pid])                     (**r compare negative *)
+    | Asm.Pmov rd r1 => ([Pmov rd r1 pid; Pincpc pid])                               (**r move integer register *)
+    | Asm.Pandimm sz rd r1 n => ([Pandimm sz rd r1 n pid; Pincpc pid])               (**r and *)
+    | Asm.Peorimm sz rd r1 n => ([Peorimm sz rd r1 n pid; Pincpc pid])               (**r xor *)
+    | Asm.Porrimm sz rd r1 n => ([Porrimm sz rd r1 n pid; Pincpc pid])               (**r or *)
+    | Asm.Ptstimm sz r1 n => ([Ptstimm sz r1 n pid; Pincpc pid])                     (**r and, then set flags *)
+    | Asm.Pmovz sz rd n pos => ([Pmovz sz rd n pos pid; Pincpc pid])                 (**r move wide immediate *)
+    | Asm.Pmovn sz rd n pos => ([Pmovn sz rd n pos pid; Pincpc pid])
+    | Asm.Pmovk sz rd n pos => ([Pmovk sz rd n pos pid; Pincpc pid])
+    | Asm.Padrp rd id ofs => ([Padrp rd id ofs pid; Pincpc pid])                     (**r PC-relative addressing *)
+    | Asm.Paddadr rd r1 id ofs => ([Paddadr rd r1 id ofs pid; Pincpc pid])
+    | Asm.Psbfiz sz rd r1 r s => ([Psbfiz sz rd r1 r s pid; Pincpc pid])              (**r Bit-field operations *)
+    | Asm.Psbfx sz rd r1 r s => ([Psbfx sz rd r1 r s pid; Pincpc pid])
+    | Asm.Pubfiz sz rd r1 r s => ([Pubfiz sz rd r1 r s pid; Pincpc pid])
+    | Asm.Pubfx sz rd r1 r s => ([Pubfx sz rd r1 r s pid; Pincpc pid])
+    | Asm.Padd sz rd r1 r2 s => ([Padd sz rd r1 r2 s pid; Pincpc pid])                (**r Integer arithmetic, shifted register *)
+    | Asm.Psub sz rd r1 r2 s => ([Psub sz rd r1 r2 s pid; Pincpc pid])
+    | Asm.Pcmp sz r1 r2 s => ([Pcmp sz r1 r2 s pid; Pincpc pid])
+    | Asm.Pcmn sz r1 r2 s => ([Pcmn sz r1 r2 s pid; Pincpc pid])
+    | Asm.Paddext rd r1 r2 x => ([Paddext rd r1 r2 x pid; Pincpc pid])                (**r Integer arithmetic, extending register *)
+    | Asm.Psubext rd r1 r2 x => ([Psubext rd r1 r2 x pid; Pincpc pid])
+    | Asm.Pcmpext r1 r2 x => ([Pcmpext r1 r2 x pid; Pincpc pid])
+    | Asm.Pcmnext r1 r2 x => ([Pcmnext r1 r2 x pid; Pincpc pid])
+    | Asm.Pand sz rd r1 r2 s => ([Pand sz rd r1 r2 s pid; Pincpc pid])                (**r Logical, shifted register *)
+    | Asm.Pbic sz rd r1 r2 s => ([Pbic sz rd r1 r2 s pid; Pincpc pid])
+    | Asm.Peon sz rd r1 r2 s => ([Peon sz rd r1 r2 s pid; Pincpc pid])
+    | Asm.Peor sz rd r1 r2 s => ([Peor sz rd r1 r2 s pid; Pincpc pid])
+    | Asm.Porr sz rd r1 r2 s => ([Porr sz rd r1 r2 s pid; Pincpc pid])
+    | Asm.Porn sz rd r1 r2 s => ([Porn sz rd r1 r2 s pid; Pincpc pid])
+    | Asm.Ptst sz r1 r2 s => ([Ptst sz r1 r2 s pid; Pincpc pid])                      (**r and, then set flags *)
+    | Asm.Pasrv sz rd r1 r2 => ([Pasrv sz rd r1 r2 pid; Pincpc pid])                  (**r Variable shifts *)
+    | Asm.Plslv sz rd r1 r2 => ([Plslv sz rd r1 r2 pid; Pincpc pid])
+    | Asm.Plsrv sz rd r1 r2 => ([Plsrv sz rd r1 r2 pid; Pincpc pid])
+    | Asm.Prorv sz rd r1 r2 => ([Prorv sz rd r1 r2 pid; Pincpc pid])
+    | Asm.Pcls sz rd r1 => ([Pcls sz rd r1 pid; Pincpc pid])                          (**r Bit operations *)
+    | Asm.Pclz sz rd r1 => ([Pclz sz rd r1 pid; Pincpc pid])
+    | Asm.Prev sz rd r1 => ([Prev sz rd r1 pid; Pincpc pid])
+    | Asm.Prev16 sz rd r1 => ([Prev16 sz rd r1 pid; Pincpc pid])
+    | Asm.Prbit sz rd r1 => ([Prbit sz rd r1 pid; Pincpc pid])
+    | Asm.Pcsel rd r1 r2 c => ([Pcsel rd r1 r2 c pid; Pincpc pid])                    (**r Conditional data processing *)
+    | Asm.Pcset rd c => ([Pcset rd c pid; Pincpc pid])
+    | Asm.Pmadd sz rd r1 r2 r3 => ([Pmadd sz rd r1 r2 r3 pid; Pincpc pid])            (**r Integer multiply/divide *)
+    | Asm.Pmsub sz rd r1 r2 r3 => ([Pmsub sz rd r1 r2 r3 pid; Pincpc pid])
+    | Asm.Psmulh rd r1 r2 => ([Psmulh rd r1 r2 pid; Pincpc pid])
+    | Asm.Pumulh rd r1 r2 => ([Pumulh rd r1 r2 pid; Pincpc pid])
+    | Asm.Psdiv sz rd r1 r2 => ([Psdiv sz rd r1 r2 pid; Pincpc pid])
+    | Asm.Pudiv sz rd r1 r2 => ([Pudiv sz rd r1 r2 pid; Pincpc pid])
+    | Asm.Pldrs rd a => ([ReadRequest txid pid a; Pldrs rd a pid txid; Pincpc pid ])                           (**r Floating-point loads and stores *)
+    | Asm.Pldrd rd a =>  ([ReadRequest txid pid a; Pldrd rd a pid txid; Pincpc pid])
+    | Asm.Pldrd_a rd a =>  ([ReadRequest txid pid a; Pldrd_a rd a pid txid; Pincpc pid])
+    | Asm.Pstrs rs a => translate_write asm_i pid txid                           (**r store single-precision float *)
+    | Asm.Pstrd rs a => translate_write asm_i pid txid 
+    | Asm.Pstrd_a rs a => translate_write asm_i pid txid 
+    | Asm.Pfmov rd r1 => ([Pfmov rd r1 pid; Pincpc pid])                              (**r Floating-point move *)
+    | Asm.Pfmovimms rd f => ([Pfmovimms rd f pid; Pincpc pid])
+    | Asm.Pfmovimmd rd f => ([Pfmovimmd rd f pid; Pincpc pid])
+    | Asm.Pfmovi fsz rd r1 => ([Pfmovi fsz rd r1 pid; Pincpc pid])
+    | Asm.Pfcvtds rd r1 => ([Pfcvtds rd r1 pid; Pincpc pid])                          (**r Floating-point conversions *)
+    | Asm.Pfcvtsd rd r1 => ([Pfcvtsd rd r1 pid; Pincpc pid])
+    | Asm.Pfcvtzs isz fsz rd r1 => ([Pfcvtzs isz fsz rd r1 pid; Pincpc pid])
+    | Asm.Pfcvtzu isz fsz rd r1 => ([Pfcvtzu isz fsz rd r1 pid; Pincpc pid])
+    | Asm.Pscvtf fsz isz rd r1 => ([Pscvtf fsz isz rd r1 pid; Pincpc pid])
+    | Asm.Pucvtf fsz isz rd r1 => ([Pucvtf fsz isz rd r1 pid; Pincpc pid])
+    | Asm.Pfabs sz rd r1 => ([Pfabs sz rd r1 pid; Pincpc pid])                        (**r Floating-point arithmetic *)
+    | Asm.Pfneg sz rd r1 => ([Pfneg sz rd r1 pid; Pincpc pid])
+    | Asm.Pfsqrt sz rd r1 => ([Pfsqrt sz rd r1 pid; Pincpc pid])
+    | Asm.Pfadd sz rd r1 r2 => ([Pfadd sz rd r1 r2 pid; Pincpc pid])
+    | Asm.Pfdiv sz rd r1 r2 => ([Pfdiv sz rd r1 r2 pid; Pincpc pid])
+    | Asm.Pfmul sz rd r1 r2 => ([Pfmul sz rd r1 r2 pid; Pincpc pid])
+    | Asm.Pfnmul sz rd r1 r2 => ([Pfnmul sz rd r1 r2 pid; Pincpc pid])
+    | Asm.Pfsub sz rd r1 r2 => ([Pfsub sz rd r1 r2 pid; Pincpc pid])
+    | Asm.Pfmadd sz rd r1 r2 r3 => ([Pfmadd sz rd r1 r2 r3 pid; Pincpc pid])
+    | Asm.Pfmsub sz rd r1 r2 r3 => ([Pfmsub sz rd r1 r2 r3 pid; Pincpc pid])
+    | Asm.Pfnmadd sz rd r1 r2 r3 => ([Pfnmadd sz rd r1 r2 r3 pid; Pincpc pid])
+    | Asm.Pfnmsub sz rd r1 r2 r3 => ([Pfnmsub sz rd r1 r2 r3 pid; Pincpc pid])
+    | Asm.Pfmax sz rd r1 r2 => ([Pfmax sz rd r1 r2 pid; Pincpc pid])
+    | Asm.Pfmin sz rd r1 r2 => ([Pfmin sz rd r1 r2 pid; Pincpc pid])
+    | Asm.Pfcmp sz r1 r2 => ([Pfcmp sz r1 r2 pid; Pincpc pid])                        (**r Floating-point comparison *)
+    | Asm.Pfcmp0 sz r1 => ([Pfcmp0 sz r1 pid; Pincpc pid])
+    | Asm.Pfsel rd r1 r2 cond => ([Pfsel rd r1 r2 cond pid; Pincpc pid])              (**r Floating-point conditional select *)
+    | Asm.Pallocframe sz linkofs => ([Pallocframe sz linkofs pid; Pincpc pid])       (**r Pseudo-instructions *)
+    | Asm.Pfreeframe sz linkofs => ([Pfreeframe sz linkofs pid; Pincpc pid])
+    | Asm.Plabel lbl => ([Plabel lbl pid; Pincpc pid])
+    | Asm.Ploadsymbol rd id => ([Ploadsymbol rd id pid; Pincpc pid])
+    | Asm.Pcvtsw2x rd r1 => ([Pcvtsw2x rd r1 pid; Pincpc pid])
+    | Asm.Pcvtuw2x rd r1 => ([Pcvtuw2x rd r1 pid; Pincpc pid])
+    | Asm.Pcvtx2w rd => ([Pcvtx2w rd pid; Pincpc pid])
+    | Asm.Pbtbl r1 tbl => ([Pbtbl r1 tbl pid])
+    | Asm.Pbuiltin ef args res => ([Pbuiltin ef args res pid; Pincpc pid])
+    | Asm.Pnop => ([Pnop pid; Pincpc pid])                                              (**r no operation *)
+    | Asm.Pcfi_adjust ofs => ([Pcfi_adjust ofs pid; Pincpc pid])
+    | Asm.Pcfi_rel_offset ofs => ([Pcfi_rel_offset ofs pid; Pincpc pid])                                
 end.
 
-(** What to do if a goto forces early abort of a list? have the individual eval_memsim_instr return a state for early abort*)
-Fixpoint eval_memsim_chain (g: genv)(f: function)(instrs: list instruction)  (ars: allregsets)  (m: mem): outcome := 
+Fixpoint eval_memsim_chain (g: genv)(f: function)(instrs: list instruction)  (ars: allregsets)  (m: mem) (ifo: in_flight_mem_ops) (eaw: early_ack_writes): outcome := 
     match instrs with
-    | nil => MemSimNext ars m
+    | nil => MemSimNext ars m ifo eaw
     | instr :: chain' =>
-        match eval_memsim_instr g f instr ars m with
-        | MemSimNext ars' m' => eval_memsim_chain g f chain' ars' m'
-        | MemSimJumpOut ars' m' => MemSimJumpOut ars' m'
+        match eval_memsim_instr g f instr ars m ifo eaw with
+        | MemSimNext ars' m' ifo eaw  => eval_memsim_chain g f (chain') ars' m' ifo eaw
+        | MemSimJumpOut ars' m' ifo eaw => MemSimJumpOut ars' m' ifo eaw
         | MemSimStuck => MemSimStuck
         end
     end.
 
-(** Proof boilerplate: move to another file asap*)
+(** Proof boilerplate: move to another file?*)
 
 (** ** Simplify matches when possible *)
 
@@ -1139,8 +1216,8 @@ Remark set_method_sem_eq_form2: forall (pid: processor_id)(pr k: preg)(rs: regse
 
 Definition end_state_equals_asm_memsim (r: preg)(asm_o: Asm.outcome) (memsim_o: outcome) (pid: processor_id): Prop :=
     match asm_o, memsim_o with
-    | Next rs m1, MemSimNext ars m2 => rs r = (ars @ (pid, r)) /\ m1 = m2
-    | Next rs m1, MemSimJumpOut ars m2 => rs r = (ars @ (pid, r)) /\ m1 = m2
+    | Next rs m1, MemSimNext ars m2 _ _ => rs r = (ars @ (pid, r)) /\ m1 = m2
+    | Next rs m1, MemSimJumpOut ars m2 _ _ => rs r = (ars @ (pid, r)) /\ m1 = m2
     | Stuck, MemSimStuck => True
     | _, _ => False
     end.
@@ -1168,6 +1245,17 @@ Remark set_sem_eq :
     apply H. 
     Qed.
 
+Remark trx_map_transitive: forall v (txid: mem_transaction_id) (ifm: in_flight_mem_ops),  
+    Trmap.set txid (v) ifm txid = v.
+Proof.
+intros. unfold Trmap.set. destruct TrxEq.eq. reflexivity. contradiction.
+Qed.
+
+(* Remark trx_map_transitive_form_2: forall v (txid: mem_transaction_id) (ifm: in_flight_mem_ops),  
+Trmap.get txid (Trmap.set txid (v) ifm) = v.
+Proof.
+intros. unfold Trmap.set. unfold Trmap.get. destruct TrxEq.eq. reflexivity. contradiction.
+Qed.  *)
 
 Ltac sem_eq_solver :=
     match goal with
@@ -1175,6 +1263,11 @@ Ltac sem_eq_solver :=
     [ |- ?x = ?x ] => reflexivity (*Terminal*)
     (*Prereq of a proof we already did upon entry*)
     | [H: regs_identical ?ars ?pid ?rs |- regs_identical ?ars ?pid ?rs] => apply H (*Terminal*)
+    (* Obvious contradiction - is there a better way to do this?*)
+    | [H1: Vptr ?b1 ?i1 = Vundef |- _] => inversion H1 (*Terminal*)
+    | [H1: Vundef =  Vptr ?b1 ?i1 |- _] => inversion H1 (*Terminal*)
+    | [H1: Some ?x = None |- _] => inversion H1 (*Terminal*)
+    | [H1: None = Some ?x |- _] => inversion H1 (*Terminal*)
     (*Gradually replace memsim regs with Asm regs*)
     | [H: forall r: PregEq.t, ?rs r = ?ars (?pid, r), 
           H2: context[?ars (?pid, ?r2)],
@@ -1185,9 +1278,11 @@ Ltac sem_eq_solver :=
     (* Set equivalent*)
     | [ |- Pregmap.set ?r ?v ?rs ?r2 = PRmap.set (?pid, ?r) ?v ?ars (?pid, ?r2)] => apply set_sem_eq; sem_eq_solver (*Nonterminal*)
     (*Replace like hypotheses*)
-    | [H1: ?x = ?y, H2: ?x = ?z |- _ ] => rewrite H1 in H2; sem_eq_solver (*Nonterminal*)
+    | [H1: ?x = ?y, H2: ?x = ?z |- _ ] => rewrite H1 in H2; try inversion H2; sem_eq_solver (*Nonterminal*)
     (*Break apart constructions*)
     | [H: ?singleton_op ?v = ?singleton_op ?v2 |- _] => inversion H; clear H; subst; sem_eq_solver (*Nonterminal*) 
+    (*Used for forwarding values from in-flight memory ops*)
+    | [H: context[Trmap.set ?txid ?v ?ifm ?txid] |- _] => rewrite -> trx_map_transitive in H; sem_eq_solver (*Nonterminal*)
     (*Pointer inversion*)
     | [H1: ?x = Vptr ?b1 ?i1,
        H2: ?x = Vptr ?b2 ?i2
@@ -1209,18 +1304,20 @@ Ltac temp_solver :=
         |- False] => assert (Hri: regs_identical (ars @ (pid, r1) <- v) pid (rs # r1 <- v)); try apply id_writes_preserve_id_regs; auto; try apply ri;
         specialize (Hri r2); rewrite <- Hri in H2; rewrite -> H2 in H1; inversion H1
     end.
-Theorem asm_identical_to_forward_sim: forall (pr: preg) (g: genv)(f: function) (i: Asm.instruction) (rs: regset) (ars: allregsets) (m: mem) (pid: processor_id), 
-    regs_identical ars pid rs -> end_state_equals_asm_memsim pr (exec_instr g f i rs  m)  (eval_memsim_chain g f (asm_to_memsim i pid) ars m) pid.
+Theorem asm_identical_to_forward_sim: forall (pr: preg) (g: genv)(f: function) (i: Asm.instruction) (rs: regset) (ars: allregsets) (m: mem) (pid: processor_id) (ifm: in_flight_mem_ops) (eaw: early_ack_writes), 
+    regs_identical ars pid rs -> end_state_equals_asm_memsim pr (exec_instr g f i rs  m)  (eval_memsim_chain g f (asm_to_memsim i pid 0) ars m ifm eaw) pid .
 Proof.
-intros. pose proof H as ri. unfold regs_identical in H.  unfold end_state_equals_asm_memsim. remember i as orig_i eqn:H_orig_i. rewrite -> H_orig_i. destruct i; simpl; try unfold Asm.goto_label; try unfold goto_label; try unfold Asm.eval_testcond; try unfold eval_testcond; try unfold Asm.exec_load; try unfold exec_load; try unfold Asm.exec_store; try unfold exec_store; try unfold Mem.loadv; try unfold eval_addressing; try unfold Asm.eval_addressing; unfold Asm.compare_long; unfold compare_long; unfold Asm.compare_int; unfold compare_int; unfold Asm.ir0w; unfold ir0w; unfold Asm.ir0x; unfold ir0x; unfold Asm.compare_single; unfold compare_single; unfold Asm.compare_float; unfold compare_float;destruct matches; try split; try unfold nextinstr; try apply set_method_sem_eq_form3; sem_eq_solver.
+intros. pose proof H as ri. unfold regs_identical in H.  unfold end_state_equals_asm_memsim. remember i as orig_i eqn:H_orig_i. rewrite -> H_orig_i. destruct i; simpl; try unfold Asm.goto_label; try unfold goto_label; try unfold Asm.eval_testcond; try unfold eval_testcond; try unfold Asm.exec_load; try unfold read_ack; try unfold read_request; try unfold Asm.exec_store; try unfold write_ack; try unfold write_request; try unfold early_ack_write; unfold serialize_write; try unfold Mem.loadv; try unfold eval_addressing; try unfold Asm.eval_addressing; unfold Asm.compare_long; unfold compare_long; unfold Asm.compare_int; unfold compare_int; unfold Asm.ir0w; unfold ir0w; unfold Asm.ir0x; unfold ir0x; unfold Asm.compare_single; unfold compare_single; unfold Asm.compare_float; unfold compare_float;destruct matches; try split; try unfold nextinstr; try apply set_method_sem_eq_form3; sem_eq_solver. 
 
-Focus 13. assert (regs_identical (ars @ (pid, X16) <- Vundef) pid (rs # X16 <- Vundef)). apply id_writes_preserve_id_regs. auto. apply ri.
+(*Solves 21/26 proof by contradiction of Pbtbl*)
+all: try temp_solver.
+
+assert (regs_identical (ars @ (pid, X16) <- Vundef) pid (rs # X16 <- Vundef)). apply id_writes_preserve_id_regs. auto. apply ri.
 pose proof H0 as Hdup. specialize (H0 r1). rewrite <- H0 in Heqv1. rewrite -> Heqv1 in Heqv. inversion Heqv. subst.
 rewrite Heqo1 in Heqo. inversion Heqo. subst. rewrite Heqo2 in Heqo0. inversion Heqo0.  subst.
 specialize (Hdup PC). rewrite <- Hdup in Heqv2. rewrite -> Heqv2 in Heqv0. inversion Heqv0. reflexivity.
 
-(*Solves 21/25 proof by contradiction of Pbtbl*)
-all: try temp_solver.
+
 
 (*4 annoying remaining edge cases*)
 subst. rewrite Heqo1 in Heqo. inversion Heqo. subst. rewrite Heqo2 in Heqo0. discriminate.
