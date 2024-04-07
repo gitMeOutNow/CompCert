@@ -368,23 +368,23 @@ Definition eval_addressing (a: addressing) (ars: allregsets) (pid: processor_id)
 Definition read_request (a: addressing) (txid: mem_transaction_id)(ars: allregsets)(pid:processor_id)(ifmo: in_flight_mem_ops): in_flight_mem_ops :=
     Trmap.set txid (Some (eval_addressing a ars pid, Vundef)) ifmo.
 
-(*Used for read acks*)
+(*represents getting data back from memory*)
 Definition read_ack (chunk: memory_chunk) (transf: val -> val) (tx_id: mem_transaction_id)
   (r: preg) (ars: allregsets) (pid: processor_id) (m: mem) (ifmo: in_flight_mem_ops) (eaw: early_ack_writes): outcome  :=
     (*Check if anything is in early write*)
     match ifmo tx_id with 
-        | Some (address, _) => match Mem.loadv chunk m address with
+        (* | Some (address, _) => match Mem.loadv chunk m address with
             | None => MemSimStuck
             | Some v => MemSimNext (ars@(pid, r) <- (transf v)) m ifmo eaw
-            end
-        (* | Some (address, _) => match eaw (pid, address) with 
+            end *)
+        | Some (address, _) => match eaw (pid, address) with 
             | Some v =>  MemSimNext (ars@(pid, r) <- (transf v)) m (Trmap.set tx_id None ifmo) eaw
             (*If not, read from main memory*)
             | None => match Mem.loadv chunk m address with
                 | None => MemSimStuck
                 | Some v => MemSimNext (ars@(pid, r) <- (transf v)) m ifmo eaw
                 end
-        end *)
+        end
         | None => MemSimStuck
     end.
 
@@ -1251,6 +1251,12 @@ Proof.
 intros. unfold Trmap.set. destruct TrxEq.eq. reflexivity. contradiction.
 Qed.
 
+Remark eaw_map_transitive: forall (v: val) (a: val) (eaw: early_ack_writes) (pid: processor_id),  
+(EWmap.set (pid, a) (Some v) eaw)(pid, a) = Some v.
+Proof.
+intros. unfold EWmap.set. destruct EWEq.eq. reflexivity. contradiction.
+Qed.
+
 (* Remark trx_map_transitive_form_2: forall v (txid: mem_transaction_id) (ifm: in_flight_mem_ops),  
 Trmap.get txid (Trmap.set txid (v) ifm) = v.
 Proof.
@@ -1283,6 +1289,8 @@ Ltac sem_eq_solver :=
     | [H: ?singleton_op ?v = ?singleton_op ?v2 |- _] => inversion H; clear H; subst; sem_eq_solver (*Nonterminal*) 
     (*Used for forwarding values from in-flight memory ops*)
     | [H: context[Trmap.set ?txid ?v ?ifm ?txid] |- _] => rewrite -> trx_map_transitive in H; sem_eq_solver (*Nonterminal*)
+    (*Used for forwarding values from early acks*)
+    | [H: context[EWmap.set ?k ?v ?m ?k] |- _] => rewrite -> eaw_map_transitive in H; sem_eq_solver (*Nonterminal*)
     (*Pointer inversion*)
     | [H1: ?x = Vptr ?b1 ?i1,
        H2: ?x = Vptr ?b2 ?i2
@@ -1304,16 +1312,24 @@ Ltac temp_solver :=
         |- False] => assert (Hri: regs_identical (ars @ (pid, r1) <- v) pid (rs # r1 <- v)); try apply id_writes_preserve_id_regs; auto; try apply ri;
         specialize (Hri r2); rewrite <- Hri in H2; rewrite -> H2 in H1; inversion H1
     end.
+(* 
+Definition early_ack_stores_same_val (eaw: early_ack_writes) (m: mem)(pid: processor_id) (a: val) (v: val): Prop :=
+    EWmap.get (pid, a) eaw = Some v -> (mem a) = v.
+ *)
+
+ Definition no_early_acks (eaw: early_ack_writes)(pid: processor_id): Prop :=
+    forall a, eaw (pid, a) = None.
+
 Theorem asm_identical_to_forward_sim: forall (pr: preg) (g: genv)(f: function) (i: Asm.instruction) (rs: regset) (ars: allregsets) (m: mem) (pid: processor_id) (ifm: in_flight_mem_ops) (eaw: early_ack_writes), 
-    regs_identical ars pid rs -> end_state_equals_asm_memsim pr (exec_instr g f i rs  m)  (eval_memsim_chain g f (asm_to_memsim i pid 0) ars m ifm eaw) pid .
+    no_early_acks eaw pid -> regs_identical ars pid rs -> end_state_equals_asm_memsim pr (exec_instr g f i rs  m)  (eval_memsim_chain g f (asm_to_memsim i pid 0) ars m ifm eaw) pid .
 Proof.
-intros. pose proof H as ri. unfold regs_identical in H.  unfold end_state_equals_asm_memsim. remember i as orig_i eqn:H_orig_i. rewrite -> H_orig_i. destruct i; simpl; try unfold Asm.goto_label; try unfold goto_label; try unfold Asm.eval_testcond; try unfold eval_testcond; try unfold Asm.exec_load; try unfold read_ack; try unfold read_request; try unfold Asm.exec_store; try unfold write_ack; try unfold write_request; try unfold early_ack_write; unfold serialize_write; try unfold Mem.loadv; try unfold eval_addressing; try unfold Asm.eval_addressing; unfold Asm.compare_long; unfold compare_long; unfold Asm.compare_int; unfold compare_int; unfold Asm.ir0w; unfold ir0w; unfold Asm.ir0x; unfold ir0x; unfold Asm.compare_single; unfold compare_single; unfold Asm.compare_float; unfold compare_float;destruct matches; try split; try unfold nextinstr; try apply set_method_sem_eq_form3; sem_eq_solver. 
+intros. pose proof H0 as ri. unfold no_early_acks in H. unfold regs_identical in H0.  unfold end_state_equals_asm_memsim. remember i as orig_i eqn:H_orig_i. rewrite -> H_orig_i. destruct i; simpl; try unfold Asm.goto_label; try unfold goto_label; try unfold Asm.eval_testcond; try unfold eval_testcond; try unfold Asm.exec_load; try unfold read_ack; try unfold read_request; try unfold Asm.exec_store; try unfold write_ack; try unfold write_request; try unfold early_ack_write; unfold serialize_write; try unfold Mem.loadv; try unfold eval_addressing; try unfold Asm.eval_addressing; unfold Asm.compare_long; unfold compare_long; unfold Asm.compare_int; unfold compare_int; unfold Asm.ir0w; unfold ir0w; unfold Asm.ir0x; unfold ir0x; unfold Asm.compare_single; unfold compare_single; unfold Asm.compare_float; unfold compare_float;destruct matches; try split; try unfold nextinstr; try apply set_method_sem_eq_form3; sem_eq_solver. 
 
 (*Solves 21/26 proof by contradiction of Pbtbl*)
-all: try temp_solver.
+all: try temp_solver. 
 
 assert (regs_identical (ars @ (pid, X16) <- Vundef) pid (rs # X16 <- Vundef)). apply id_writes_preserve_id_regs. auto. apply ri.
-pose proof H0 as Hdup. specialize (H0 r1). rewrite <- H0 in Heqv1. rewrite -> Heqv1 in Heqv. inversion Heqv. subst.
+pose proof H1 as Hdup. specialize (H1 r1). rewrite <- H1 in Heqv1. rewrite -> Heqv1 in Heqv. inversion Heqv. subst.
 rewrite Heqo1 in Heqo. inversion Heqo. subst. rewrite Heqo2 in Heqo0. inversion Heqo0.  subst.
 specialize (Hdup PC). rewrite <- Hdup in Heqv2. rewrite -> Heqv2 in Heqv0. inversion Heqv0. reflexivity.
 
@@ -1327,392 +1343,397 @@ subst.  rewrite Heqo0 in Heqo. inversion Heqo.
 Qed.
 
 
-      
+Lemma outcome_equality: forall (ars1 ars2: allregsets)(m1 m2: mem)(eaw1 eaw2: early_ack_writes) (ifmo1 ifmo2: in_flight_mem_ops), 
+     MemSimNext ars1 m1 ifmo1 eaw1 = MemSimNext ars2 m2 ifmo2 eaw2 -> ars1 = ars2 /\ m1 = m2 /\ eaw1 = eaw2 /\ ifmo1 = ifmo2. 
+    Proof. intros. inversion H. split. reflexivity. split. reflexivity. split. reflexivity. reflexivity. Qed.
 
-(** Classification functions for processor registers (used in Asmgenproof). *)
-
-Definition data_preg (r: preg) : bool :=
-  match r with
-  | IR X16 => false
-  | IR X30 => false
-  | IR _ => true
-  | FR _ => true
-  | CR _ => false
-  | SP => true
-  | PC => false
-  end.
-
-
-Lemma outcome_equality: forall (rs1 rs2: regset)(m1 m2: mem),  Next rs1 m1 = Next rs2 m2 -> rs1 = rs2 /\ m1 = m2. 
-    Proof. intros. inversion H. split; reflexivity. Qed.
-
-Lemma inverse_outcome_equality: forall (rs1 rs2: regset)(m1 m2: mem), rs1 = rs2 /\ m1 = m2 -> Next rs1 m1 = Next rs2 m2.
-Proof. intros. destruct H. rewrite H. rewrite H0. reflexivity. Qed.
+Lemma inverse_outcome_equality: forall (ars1 ars2: allregsets)(m1 m2: mem)(eaw1 eaw2: early_ack_writes) (ifmo1 ifmo2: in_flight_mem_ops), 
+ars1 = ars2 /\ m1 = m2 /\ eaw1 = eaw2 /\ ifmo1 = ifmo2 -> MemSimNext ars1 m1 ifmo1 eaw1 = MemSimNext ars2 m2 ifmo2 eaw2. 
+Proof. intros. destruct H. destruct H0. destruct H1. subst. reflexivity. Qed.
 
 (* need some way of abstracting 
 for a given instruction if an argument is a data source/data sink*)
+(* Does it make sense to treat EAW as its own thing? idt so - come back to it?*)
+(* In flight memory operations cannot be overwritten, so we ignore them here*)
 Inductive data_resource: Type :=
-    | SingleReg: preg -> data_resource
-    | SingleMemAddr: memory_chunk -> val -> data_resource.
+    | SingleReg: processor_id -> preg -> data_resource
+    | SingleMemAddr: memory_chunk -> val -> data_resource
+    .
+
 Definition data_res_eq (d1 d2: data_resource): Prop :=
     match d1, d2 with
-    | SingleReg r1, SingleReg r2 => r1 = r2
+    | SingleReg p1 r1, SingleReg p2 r2 => p1 = p2 /\ r1 = r2
     | SingleMemAddr c1 a1, SingleMemAddr c2 a2 => c1 = c2 /\ a1 = a2
     | _, _ => False
     end.
 
-Definition iregz_same_resource (dr: data_resource) (r: ireg0) : Prop :=
+Definition iregz_same_resource (dr: data_resource) (r: ireg0) (pid: processor_id) : Prop :=
     match r with 
-    | RR0 r1 => data_res_eq dr (SingleReg r1) 
+    | RR0 r1 => data_res_eq dr (SingleReg pid r1 ) 
     | XZR => False
     end.
     
     
 Remark data_res_isomorphism: forall r, data_res_eq r r.
 Proof.
-    intros. destruct r. unfold data_res_eq. reflexivity. unfold data_res_eq. split; reflexivity. 
+    intros. destruct r. unfold data_res_eq. split; reflexivity. unfold data_res_eq. split; reflexivity. 
 Qed.
 
 Lemma symb_data_eq: forall (x y: data_resource), {x=y} + {x<>y}.
-Proof. decide equality. apply preg_eq. apply Val.eq. apply AST.chunk_eq.
+Proof. decide equality. apply preg_eq. apply Z.eq_dec. apply Val.eq. apply AST.chunk_eq.
 Qed.
 
 (* TODO Check if data resource d is an input for address a. Requires checking the regs of A*)
-Definition data_address_src(a: addressing) (d: data_resource) : Prop := 
+Definition data_address_src (pid: processor_id)(a: addressing) (d: data_resource) : Prop := 
    match a with
-   | ADimm base n => data_res_eq d (SingleReg (preg_of_iregsp base))
-   | ADreg base r => data_res_eq d (SingleReg (preg_of_iregsp base)) \/  data_res_eq d (SingleReg r) 
-   | ADlsl base r n => data_res_eq d  ( SingleReg (preg_of_iregsp base)) \/ data_res_eq d (SingleReg r) 
-   | ADsxt base r n => data_res_eq d (SingleReg (preg_of_iregsp base)) \/ data_res_eq d (SingleReg r) 
-   | ADuxt base r n => data_res_eq d (SingleReg (preg_of_iregsp base)) \/ data_res_eq d (SingleReg r) 
-   | ADadr base id ofs => data_res_eq d (SingleReg (preg_of_iregsp base))
+   | ADimm base n => data_res_eq d (SingleReg pid (preg_of_iregsp base))
+   | ADreg base r => data_res_eq d (SingleReg pid (preg_of_iregsp base)) \/  data_res_eq d (SingleReg pid r) 
+   | ADlsl base r n => data_res_eq d  ( SingleReg pid (preg_of_iregsp base)) \/ data_res_eq d (SingleReg pid r) 
+   | ADsxt base r n => data_res_eq d (SingleReg pid (preg_of_iregsp base)) \/ data_res_eq d (SingleReg pid r) 
+   | ADuxt base r n => data_res_eq d (SingleReg pid (preg_of_iregsp base)) \/ data_res_eq d (SingleReg pid r) 
+   | ADadr base id ofs => data_res_eq d (SingleReg pid (preg_of_iregsp base))
    | ADpostincr base n => True (* not modeled in CompCert*) 
    end.
 
 
 
  (* Check if data resource d is overwritten by a. Requires checking the evaluated expr*)
- Definition data_address_sink (a: addressing) (d: data_resource) (g: genv) (r: regset): Prop := 
+ Definition data_address_sink (a: addressing) (d: data_resource) (g: genv) (ars: allregsets) (pid: processor_id): Prop := 
     match d with
-    | SingleMemAddr _ val => eval_addressing g a r = val
+    | SingleMemAddr _ val => eval_addressing g a ars pid  = val
     | _ => False
     end.
-
-(* TODO: change all instances of NoResource to false? kinda based*)
 
 (* Get a proposition representing if an instruction has a dependency on dr*)
 Definition data_source(i: instruction) (dr: data_resource): Prop := 
     match i with 
    (* Jump to*)
-   | Pb lbl => False                                                    (**r branch *)
-   | Pbc c lbl  => data_res_eq dr (SingleReg (CR CZ))                                    (**r conditional branch *)
-   | Pbl id sg => data_res_eq dr (SingleReg PC)                                  (**r jump to function and link *)
-   | Pbs id sg => False                              (**r jump to function *)
-   | Pblr r sg  => data_res_eq dr (SingleReg PC)                                   (**r indirect jump and link *)
-   | Pbr r sg   => data_res_eq dr (SingleReg PC)                                   (**r indirect jump *)
-   | Pret r => False                                              (**r return *)
-   | Pcbnz sz r lbl    => data_res_eq dr (SingleReg r)                      (**r branch if not zero *)
-   | Pcbz sz r lbl => data_res_eq dr (SingleReg r)                         (**r branch if zero *)
-   | Ptbnz sz r n lbl   => data_res_eq dr (SingleReg r)               (**r branch if bit n is not zero *)
-   | Ptbz sz r n lbl => data_res_eq dr (SingleReg r)                  (**r branch if bit n is zero *)
+   | Pb lbl pid => False                                                    (**r branch *)
+   | Pbc c lbl  pid => data_res_eq dr (SingleReg pid (CR CZ))                                    (**r conditional branch *)
+   | Pbl id sg pid => data_res_eq dr (SingleReg pid PC)                                  (**r jump to function and link *)
+   | Pbs id sg pid => False                              (**r jump to function *)
+   | Pblr r sg  pid => data_res_eq dr (SingleReg pid PC)                                   (**r indirect jump and link *)
+   | Pbr r sg   pid => data_res_eq dr (SingleReg pid PC)                                   (**r indirect jump *)
+   | Pret r pid => False                                              (**r return *)
+   | Pcbnz sz r lbl    pid => data_res_eq dr (SingleReg pid r)                      (**r branch if not zero *)
+   | Pcbz sz r lbl pid => data_res_eq dr (SingleReg pid r)                         (**r branch if zero *)
+   | Ptbnz sz r n lbl   pid => data_res_eq dr (SingleReg pid r)               (**r branch if bit n is not zero *)
+   | Ptbz sz r n lbl pid => data_res_eq dr (SingleReg pid r)                  (**r branch if bit n is zero *)
    (** Memory loads and stores *)
-   | Pldrw rd a => data_address_src a dr                             (**r load int32 *)
-   | Pldrw_a rd a => data_address_src a dr                                 (**r load int32 as any32 *)
-   | Pldrx rd a => data_address_src a dr                                  (**r load int64 *)
-   | Pldrx_a rd a => data_address_src a dr                                 (**r load int64 as any64 *)
-   | Pldrb sz rd a => data_address_src a dr                         (**r load int8, zero-extend *)
-   | Pldrsb sz rd a => data_address_src a dr                        (**r load int8, sign-extend *)
-   | Pldrh sz rd a => data_address_src a dr                        (**r load int16, zero-extend *)
-   | Pldrsh sz rd a => data_address_src a dr                        (**r load int16, sign-extend *)
-   | Pldrzw rd a  => data_address_src a dr                                  (**r load int32, zero-extend to int64 *)
-   | Pldrsw rd a => data_res_eq dr (SingleReg rd)                                 (**r load int32, sign-extend to int64 *)
-   | Pldp rd1 rd2 a => data_res_eq dr (SingleReg rd1) \/ data_res_eq dr (SingleReg rd2)                               (**r load two int64 *)
+   | Pldrw rd a pid tx_id =>  False                            (**r load int32 *)
+   | Pldrw_a rd a pid tx_id =>  False                                (**r load int32 as any32 *)
+   | Pldrx rd a pid tx_id =>  False                                 (**r load int64 *)
+   | Pldrx_a rd a pid tx_id =>  False                                (**r load int64 as any64 *)
+   | Pldrb sz rd a pid tx_id =>  False                        (**r load int8, zero-extend *)
+   | Pldrsb sz rd a pid tx_id =>  False                       (**r load int8, sign-extend *)
+   | Pldrh sz rd a pid tx_id =>  False                       (**r load int16, zero-extend *)
+   | Pldrsh sz rd a pid tx_id =>  False                       (**r load int16, sign-extend *)
+   | Pldrzw rd a  pid tx_id =>  False                                 (**r load int32, zero-extend to int64 *)
+   | Pldrsw rd a pid tx_id => False                                (**r load int32, sign-extend to int64 *)
+   | Pldp rd1 rd2 a pid tx_id => False                            (**r load two int64 *)
    (** Stores *)
-   | Pstrw rs a => data_res_eq dr (SingleReg rs)                               (**r store int32 *)
-   | Pstrw_a rs a => data_res_eq dr (SingleReg rs)                                     (**r store int32 as any32 *)
-   | Pstrx rs a => data_res_eq dr (SingleReg rs)                                      (**r store int64 *)
-   | Pstrx_a rs a => data_res_eq dr (SingleReg rs)                                   (**r store int64 as any64 *)
-   | Pstrb rs a => data_res_eq dr (SingleReg rs)                                    (**r store int8 *)
-   | Pstrh rs a => data_res_eq dr (SingleReg rs)                                    (**r store int16 *)
-   | Pstp rs1 rs2 a => data_res_eq dr (SingleReg rs1)  \/ data_res_eq dr (SingleReg rs2)                               (**r store two int64 *)
+   | Pstrw  a pid txid => False                            (**r store int32 *)
+   | Pstrw_a  a pid txid => False                                  (**r store int32 as any32 *)
+   | Pstrx  a pid txid => False                                   (**r store int64 *)
+   | Pstrx_a  a pid txid => False                                (**r store int64 as any64 *)
+   | Pstrb  a pid txid => False                                 (**r store int8 *)
+   | Pstrh  a pid txid => False                                 (**r store int16 *)
+   | Pstp a pid txid => True                              (**Not generated by compcert *)
    (** Integer arithmetic, immediate *)
-   | Paddimm sz rd r1 n  => data_res_eq dr (SingleReg (preg_of_iregsp r1))            (**r addition *)
-   | Psubimm sz rd r1 n => data_res_eq dr (SingleReg (preg_of_iregsp r1))               (**r subtraction *)
-   | Pcmpimm sz r1 n => data_res_eq dr (SingleReg r1)                             (**r compare *)
-   | Pcmnimm sz r1 n => data_res_eq dr (SingleReg r1)                              (**r compare negative *)
+   | Paddimm sz rd r1 n  pid => data_res_eq dr (SingleReg pid (preg_of_iregsp r1))            (**r addition *)
+   | Psubimm sz rd r1 n pid => data_res_eq dr (SingleReg pid (preg_of_iregsp r1))               (**r subtraction *)
+   | Pcmpimm sz r1 n pid => data_res_eq dr (SingleReg pid r1)                             (**r compare *)
+   | Pcmnimm sz r1 n pid => data_res_eq dr (SingleReg pid r1)                              (**r compare negative *)
    (** Move integer register *)
-   | Pmov rd r1 => data_res_eq dr (SingleReg (preg_of_iregsp r1)) 
+   | Pmov rd r1 pid => data_res_eq dr (SingleReg pid (preg_of_iregsp r1)) 
    (** Logical, immediate *)
-   | Pandimm sz rd r1 n => iregz_same_resource dr r1                 (**r and *)
-   | Peorimm sz rd r1 n => iregz_same_resource dr r1                  (**r xor *)
-   | Porrimm sz rd r1 n => iregz_same_resource dr r1                  (**r or *)
-   | Ptstimm sz r1 n => data_res_eq dr (SingleReg r1)                             (**r and, then set flags *)
+   | Pandimm sz rd r1 n pid => iregz_same_resource dr r1 pid                (**r and *)
+   | Peorimm sz rd r1 n pid => iregz_same_resource dr r1 pid                 (**r xor *)
+   | Porrimm sz rd r1 n pid => iregz_same_resource dr r1 pid                 (**r or *)
+   | Ptstimm sz r1 n pid => data_res_eq dr (SingleReg pid r1)                             (**r and, then set flags *)
    (** Move wide immediate *)
-   | Pmovz sz rd n pos  => False                (**r move [n << pos] to [rd] *)
-   | Pmovn sz rd n pos  => False                (**r move [NOT(n << pos)] to [rd] *)
-   | Pmovk sz rd n pos  => False                (**r insert 16 bits of [n] at [pos] in rd *)
+   | Pmovz sz rd n pos  pid => False                (**r move [n << pos] to [rd] *)
+   | Pmovn sz rd n pos  pid => False                (**r move [NOT(n << pos)] to [rd] *)
+   | Pmovk sz rd n pos  pid => False                (**r insert 16 bits of [n] at [pos] in rd *)
    (** PC-relative addressing *)
-   | Padrp rd id ofs => False                   (**r set [rd] to high address of [id + ofs] *)
-   | Paddadr rd r1 id ofs => data_res_eq dr (SingleReg r1)             (**r add the low address of [id + ofs] *)
+   | Padrp rd id ofs pid => False                   (**r set [rd] to high address of [id + ofs] *)
+   | Paddadr rd r1 id ofs pid => data_res_eq dr (SingleReg pid r1)             (**r add the low address of [id + ofs] *)
    (** Bit-field operations *)
-   | Psbfiz sz rd r1 r s => data_res_eq dr (SingleReg r1)           (**r sign extend and shift left *)
-   | Psbfx sz rd r1 r s => data_res_eq dr (SingleReg r1)           (**r shift right and sign extend *)
-   | Pubfiz sz rd r1 r s => data_res_eq dr (SingleReg r1)           (**r zero extend and shift left *)
-   | Pubfx sz rd r1 r s => data_res_eq dr (SingleReg r1)           (**r shift right and zero extend *)
+   | Psbfiz sz rd r1 r s pid => data_res_eq dr (SingleReg pid r1)           (**r sign extend and shift left *)
+   | Psbfx sz rd r1 r s pid => data_res_eq dr (SingleReg pid r1)           (**r shift right and sign extend *)
+   | Pubfiz sz rd r1 r s pid => data_res_eq dr (SingleReg pid r1)           (**r zero extend and shift left *)
+   | Pubfx sz rd r1 r s pid => data_res_eq dr (SingleReg pid r1)           (**r shift right and zero extend *)
    (** Integer arithmetic, shifted register *)
-   | Padd sz rd r1 r2 s => iregz_same_resource dr r1 \/ data_res_eq dr (SingleReg r2)    (**r addition *)
-   | Psub sz rd r1 r2 s => iregz_same_resource dr r1 \/ data_res_eq dr (SingleReg r2)   (**r subtraction *)
-   | Pcmp sz r1 r2 s => iregz_same_resource dr r1 \/ data_res_eq dr (SingleReg r2)              (**r compare *)
-   | Pcmn sz r1 r2 s => iregz_same_resource dr r1 \/ data_res_eq dr (SingleReg r2)              (**r compare negative *)
+   | Padd sz rd r1 r2 s pid => iregz_same_resource dr r1 pid \/ data_res_eq dr (SingleReg pid r2)    (**r addition *)
+   | Psub sz rd r1 r2 s pid => iregz_same_resource dr r1 pid \/ data_res_eq dr (SingleReg pid r2)   (**r subtraction *)
+   | Pcmp sz r1 r2 s pid => iregz_same_resource dr r1 pid \/ data_res_eq dr (SingleReg pid r2)              (**r compare *)
+   | Pcmn sz r1 r2 s pid => iregz_same_resource dr r1 pid \/ data_res_eq dr (SingleReg pid r2)              (**r compare negative *)
    (** Integer arithmetic, extending register *)
-   | Paddext rd r1 r2 x => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2)        (**r int64-int32 add *)
-   | Psubext rd r1 r2 x => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2)        (**r int64-int32 sub *)
-   | Pcmpext r1 r2 x => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2)                     (**r int64-int32 cmp *)
-   | Pcmnext r1 r2 x => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2)                       (**r int64-int32 cmn *)
+   | Paddext rd r1 r2 x pid => data_res_eq dr (SingleReg pid r1) \/ data_res_eq dr (SingleReg pid r2)        (**r int64-int32 add *)
+   | Psubext rd r1 r2 x pid => data_res_eq dr (SingleReg pid r1) \/ data_res_eq dr (SingleReg pid r2)        (**r int64-int32 sub *)
+   | Pcmpext r1 r2 x pid => data_res_eq dr (SingleReg pid r1) \/ data_res_eq dr (SingleReg pid r2)                     (**r int64-int32 cmp *)
+   | Pcmnext r1 r2 x pid => data_res_eq dr (SingleReg pid r1) \/ data_res_eq dr (SingleReg pid r2)                       (**r int64-int32 cmn *)
    (** Logical, shifted register *)
-   | Pand sz rd r1 r2 s => iregz_same_resource dr r1 \/ data_res_eq dr (SingleReg r2)   (**r and *)
-   | Pbic sz rd r1 r2 s => iregz_same_resource dr r1 \/ data_res_eq dr (SingleReg r2)   (**r and-not *)
-   | Peon sz rd r1 r2 s => iregz_same_resource dr r1 \/ data_res_eq dr (SingleReg r2)   (**r xor-not *)
-   | Peor sz rd r1 r2 s => iregz_same_resource dr r1 \/ data_res_eq dr (SingleReg r2)   (**r xor *)
-   | Porr sz rd r1 r2 s => iregz_same_resource dr r1 \/ data_res_eq dr (SingleReg r2)   (**r or *)
-   | Porn sz rd r1 r2 s => iregz_same_resource dr r1 \/ data_res_eq dr (SingleReg r2)   (**r or-not *)
-   | Ptst sz r1 r2 s => iregz_same_resource dr r1 \/ data_res_eq dr (SingleReg r2)                (**r and, then set flags *)
+   | Pand sz rd r1 r2 s pid => iregz_same_resource dr r1 pid \/ data_res_eq dr (SingleReg pid r2)   (**r and *)
+   | Pbic sz rd r1 r2 s pid => iregz_same_resource dr r1 pid \/ data_res_eq dr (SingleReg pid r2)   (**r and-not *)
+   | Peon sz rd r1 r2 s pid => iregz_same_resource dr r1 pid \/ data_res_eq dr (SingleReg pid r2)   (**r xor-not *)
+   | Peor sz rd r1 r2 s pid => iregz_same_resource dr r1 pid \/ data_res_eq dr (SingleReg pid r2)   (**r xor *)
+   | Porr sz rd r1 r2 s pid => iregz_same_resource dr r1 pid \/ data_res_eq dr (SingleReg pid r2)   (**r or *)
+   | Porn sz rd r1 r2 s pid => iregz_same_resource dr r1 pid \/ data_res_eq dr (SingleReg pid r2)   (**r or-not *)
+   | Ptst sz r1 r2 s pid => iregz_same_resource dr r1 pid \/ data_res_eq dr (SingleReg pid r2)                (**r and, then set flags *)
    (** Variable shifts *)
-   | Pasrv sz rd r1 r2 => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2)                         (**r arithmetic right shift *)
-   | Plslv sz rd r1 r2 => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2)                         (**r left shift *)
-   | Plsrv sz rd r1 r2 => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2)                         (**r logical right shift *)
-   | Prorv sz rd r1 r2 => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2)                        (**r rotate right *)
+   | Pasrv sz rd r1 r2 pid => data_res_eq dr (SingleReg pid r1) \/ data_res_eq dr (SingleReg pid r2)                         (**r arithmetic right shift *)
+   | Plslv sz rd r1 r2 pid => data_res_eq dr (SingleReg pid r1) \/ data_res_eq dr (SingleReg pid r2)                         (**r left shift *)
+   | Plsrv sz rd r1 r2 pid => data_res_eq dr (SingleReg pid r1) \/ data_res_eq dr (SingleReg pid r2)                         (**r logical right shift *)
+   | Prorv sz rd r1 r2 pid => data_res_eq dr (SingleReg pid r1) \/ data_res_eq dr (SingleReg pid r2)                        (**r rotate right *)
    (** Bit operations *)
-   | Pcls sz rd r1 => data_res_eq dr (SingleReg r1)                                    (**r count leading sign bits *)
-   | Pclz sz rd r1 => data_res_eq dr (SingleReg r1)                                     (**r count leading zero bits *)
-   | Prev sz rd r1 => data_res_eq dr (SingleReg r1)                                    (**r reverse bytes *)
-   | Prev16 sz rd r1 => data_res_eq dr (SingleReg r1)                                   (**r reverse bytes in each 16-bit word *)
-   | Prbit sz rd r1  => data_res_eq dr (SingleReg r1)                                   (**r reverse bits *)
+   | Pcls sz rd r1 pid => data_res_eq dr (SingleReg pid r1)                                    (**r count leading sign bits *)
+   | Pclz sz rd r1 pid => data_res_eq dr (SingleReg pid r1)                                     (**r count leading zero bits *)
+   | Prev sz rd r1 pid => data_res_eq dr (SingleReg pid r1)                                    (**r reverse bytes *)
+   | Prev16 sz rd r1 pid => data_res_eq dr (SingleReg pid r1)                                   (**r reverse bytes in each 16-bit word *)
+   | Prbit sz rd r1  pid => data_res_eq dr (SingleReg pid r1)                                   (**r reverse bits *)
    (** Conditional data processing *)
-   | Pcsel rd r1 r2 c  => data_res_eq dr (SingleReg r1)  \/ data_res_eq dr (SingleReg r2)                      (**r int conditional move *)
+   | Pcsel rd r1 r2 c  pid => data_res_eq dr (SingleReg pid r1)  \/ data_res_eq dr (SingleReg pid r2)                      (**r int conditional move *)
     (*TODO: anything more to handle conditions?*)
-   | Pcset rd c => False                               (**r set to 1/0 if cond is true/false *)
+   | Pcset rd c pid => False                               (**r set to 1/0 if cond is true/false *)
    (*
    | Pcsetm rd c                                   (**r set to -1/0 if cond is true/false *)
    *)
    (** Integer multiply/divide *)
-   | Pmadd sz rd r1 r2 r3 =>  data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2) \/ iregz_same_resource dr r3              (**r multiply-add *)
-   | Pmsub sz rd r1 r2 r3 => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2) \/ iregz_same_resource dr r3            (**r multiply-sub *)
-   | Psmulh rd r1 r2 => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2)                                   (**r signed multiply high *)
-   | Pumulh rd r1 r2 => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2)                                   (**r unsigned multiply high *)
-   | Psdiv sz rd r1 r2 => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2)                       (**r signed division *)
-   | Pudiv sz rd r1 r2 => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2)                       (**r unsigned division *)
+   | Pmadd sz rd r1 r2 r3 pid =>  data_res_eq dr (SingleReg pid r1) \/ data_res_eq dr (SingleReg pid r2) \/ iregz_same_resource dr r3 pid              (**r multiply-add *)
+   | Pmsub sz rd r1 r2 r3 pid => data_res_eq dr (SingleReg pid r1) \/ data_res_eq dr (SingleReg pid r2) \/ iregz_same_resource dr r3 pid           (**r multiply-sub *)
+   | Psmulh rd r1 r2 pid => data_res_eq dr (SingleReg pid r1) \/ data_res_eq dr (SingleReg pid r2)                                   (**r signed multiply high *)
+   | Pumulh rd r1 r2 pid => data_res_eq dr (SingleReg pid r1) \/ data_res_eq dr (SingleReg pid r2)                                   (**r unsigned multiply high *)
+   | Psdiv sz rd r1 r2 pid => data_res_eq dr (SingleReg pid r1) \/ data_res_eq dr (SingleReg pid r2)                       (**r signed division *)
+   | Pudiv sz rd r1 r2 pid => data_res_eq dr (SingleReg pid r1) \/ data_res_eq dr (SingleReg pid r2)                       (**r unsigned division *)
    (** Floating-point loads and stores *)
-   | Pldrs rd a => data_address_src a dr                                   (**r load float32 (single precision) *)
-   | Pldrd rd a => data_address_src a dr                                  (**r load float64 (double precision) *)
-   | Pldrd_a rd a => data_address_src a dr                                (**r load float64 as any64 *)
-   | Pstrs rs a => data_res_eq dr (SingleReg rs)                                   (**r store float32 *)
-   | Pstrd rs a => data_res_eq dr (SingleReg rs)                                   (**r store float64 *)
-   | Pstrd_a rs a => data_res_eq dr (SingleReg rs)                                (**r store float64 as any64 *)
+   | Pldrs rd a pid tx_id => False                                   (**r load float32 (single precision) *)
+   | Pldrd rd a pid tx_id => False                                  (**r load float64 (double precision) *)
+   | Pldrd_a rd a pid tx_id => False                                (**r load float64 as any64 *)
+   | Pstrs a pid tx_id => False                                   (**r store float32 *)
+   | Pstrd a pid tx_id => False                                   (**r store float64 *)
+   | Pstrd_a a pid tx_id=> False                                (**r store float64 as any64 *)
    (** Floating-point move *)
-   | Pfmov rd r1 => data_res_eq dr (SingleReg r1) 
-   | Pfmovimms rd f  => False                                (**r load float32 constant *)
-   | Pfmovimmd rd f  => False                                  (**r load float64 constant *)
-   | Pfmovi fsz rd r1 => iregz_same_resource dr r1                         (**r copy int reg to FP reg *)
+   | Pfmov rd r1 pid => data_res_eq dr (SingleReg pid r1) 
+   | Pfmovimms rd f  pid => False                                (**r load float32 constant *)
+   | Pfmovimmd rd f  pid => False                                  (**r load float64 constant *)
+   | Pfmovi fsz rd r1 pid => iregz_same_resource dr r1 pid                         (**r copy int reg to FP reg *)
    (** Floating-point conversions *)
-   | Pfcvtds rd r1  => data_res_eq dr (SingleReg r1)                                            (**r convert float32 to float64 *)
-   | Pfcvtsd rd r1  => data_res_eq dr (SingleReg r1)                                           (**r convert float64 to float32 *)
-   | Pfcvtzs isz fsz rd r1 => data_res_eq dr (SingleReg r1)            (**r convert float to signed int *)
-   | Pfcvtzu isz fsz rd r1 => data_res_eq dr (SingleReg r1)           (**r convert float to unsigned int *)
-   | Pscvtf fsz isz rd r1 => data_res_eq dr (SingleReg r1)             (**r convert signed int to float *)
-   | Pucvtf fsz isz rd r1 => data_res_eq dr (SingleReg r1)            (**r convert unsigned int to float *)
+   | Pfcvtds rd r1  pid => data_res_eq dr (SingleReg pid r1)                                            (**r convert float32 to float64 *)
+   | Pfcvtsd rd r1  pid => data_res_eq dr (SingleReg pid r1)                                           (**r convert float64 to float32 *)
+   | Pfcvtzs isz fsz rd r1 pid => data_res_eq dr (SingleReg pid r1)            (**r convert float to signed int *)
+   | Pfcvtzu isz fsz rd r1 pid => data_res_eq dr (SingleReg pid r1)           (**r convert float to unsigned int *)
+   | Pscvtf fsz isz rd r1 pid => data_res_eq dr (SingleReg pid r1)             (**r convert signed int to float *)
+   | Pucvtf fsz isz rd r1 pid => data_res_eq dr (SingleReg pid r1)            (**r convert unsigned int to float *)
    (** Floating-point arithmetic *)
-   | Pfabs sz rd r1 => data_res_eq dr (SingleReg r1)                                    (**r absolute value *)
-   | Pfneg sz rd r1 => data_res_eq dr (SingleReg r1)                                    (**r negation *)
-   | Pfsqrt sz rd r1 => data_res_eq dr (SingleReg r1)                                   (**r square root *)
-   | Pfadd sz rd r1 r2 => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2)                                 (**r addition *)
-   | Pfdiv sz rd r1 r2  => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2)                               (**r division *)
-   | Pfmul sz rd r1 r2  => data_res_eq dr (SingleReg r1)  \/ data_res_eq dr (SingleReg r2)                             (**r multiplication *)
-   | Pfnmul sz rd r1 r2 => data_res_eq dr (SingleReg r1)  \/ data_res_eq dr (SingleReg r2)                             (**r multiply-negate *)
-   | Pfsub sz rd r1 r2 => data_res_eq dr (SingleReg r1)   \/ data_res_eq dr (SingleReg r2)                              (**r subtraction *)
-   | Pfmadd sz rd r1 r2 r3 => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2) \/ data_res_eq dr (SingleReg r3)                            (**r [rd = r3 + r1 * r2] *)
-   | Pfmsub sz rd r1 r2 r3 => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2) \/ data_res_eq dr (SingleReg r3)                            (**r [rd = r3 - r1 * r2] *)
-   | Pfnmadd sz rd r1 r2 r3 => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2) \/ data_res_eq dr (SingleReg r3)                           (**r [rd = - r3 - r1 * r2] *)
-   | Pfnmsub sz rd r1 r2 r3 => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2) \/ data_res_eq dr (SingleReg r3)                           (**r [rd = - r3 + r1 * r2] *)
-   | Pfmax sz rd r1 r2 => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2)                                (**r maximum *)
-   | Pfmin sz rd r1 r2 => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2)                               (**r minimum *)
+   | Pfabs sz rd r1 pid => data_res_eq dr (SingleReg pid r1)                                    (**r absolute value *)
+   | Pfneg sz rd r1 pid => data_res_eq dr (SingleReg pid r1)                                    (**r negation *)
+   | Pfsqrt sz rd r1 pid => data_res_eq dr (SingleReg pid r1)                                   (**r square root *)
+   | Pfadd sz rd r1 r2 pid => data_res_eq dr (SingleReg pid r1) \/ data_res_eq dr (SingleReg pid r2)                                 (**r addition *)
+   | Pfdiv sz rd r1 r2  pid => data_res_eq dr (SingleReg pid r1) \/ data_res_eq dr (SingleReg pid r2)                               (**r division *)
+   | Pfmul sz rd r1 r2  pid => data_res_eq dr (SingleReg pid r1)  \/ data_res_eq dr (SingleReg pid r2)                             (**r multiplication *)
+   | Pfnmul sz rd r1 r2 pid => data_res_eq dr (SingleReg pid r1)  \/ data_res_eq dr (SingleReg pid r2)                             (**r multiply-negate *)
+   | Pfsub sz rd r1 r2 pid => data_res_eq dr (SingleReg pid r1)   \/ data_res_eq dr (SingleReg pid r2)                              (**r subtraction *)
+   | Pfmadd sz rd r1 r2 r3 pid => data_res_eq dr (SingleReg pid r1) \/ data_res_eq dr (SingleReg pid r2) \/ data_res_eq dr (SingleReg pid r3)                            (**r [rd = r3 + r1 * r2] *)
+   | Pfmsub sz rd r1 r2 r3 pid => data_res_eq dr (SingleReg pid r1) \/ data_res_eq dr (SingleReg pid r2) \/ data_res_eq dr (SingleReg pid r3)                            (**r [rd = r3 - r1 * r2] *)
+   | Pfnmadd sz rd r1 r2 r3 pid => data_res_eq dr (SingleReg pid r1) \/ data_res_eq dr (SingleReg pid r2) \/ data_res_eq dr (SingleReg pid r3)                           (**r [rd = - r3 - r1 * r2] *)
+   | Pfnmsub sz rd r1 r2 r3 pid => data_res_eq dr (SingleReg pid r1) \/ data_res_eq dr (SingleReg pid r2) \/ data_res_eq dr (SingleReg pid r3)                           (**r [rd = - r3 + r1 * r2] *)
+   | Pfmax sz rd r1 r2 pid => data_res_eq dr (SingleReg pid r1) \/ data_res_eq dr (SingleReg pid r2)                                (**r maximum *)
+   | Pfmin sz rd r1 r2 pid => data_res_eq dr (SingleReg pid r1) \/ data_res_eq dr (SingleReg pid r2)                               (**r minimum *)
    (** Floating-point comparison *)
-   | Pfcmp sz r1 r2 => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2)                                   (**r compare [r1] and [r2] *)
-   | Pfcmp0 sz r1 => data_res_eq dr (SingleReg r1)                                      (**r compare [r1] and [+0.0] *)
+   | Pfcmp sz r1 r2 pid => data_res_eq dr (SingleReg pid r1) \/ data_res_eq dr (SingleReg pid r2)                                   (**r compare [r1] and [r2] *)
+   | Pfcmp0 sz r1 pid => data_res_eq dr (SingleReg pid r1)                                      (**r compare [r1] and [+0.0] *)
    (** Floating-point conditional select *)
    (*TODO: figure out cond*)
-   | Pfsel rd r1 r2 cond => data_res_eq dr (SingleReg r1) \/ data_res_eq dr (SingleReg r2)
+   | Pfsel rd r1 r2 cond pid => data_res_eq dr (SingleReg pid r1) \/ data_res_eq dr (SingleReg pid r2)
    (** Pseudo-instructions *)
-   | Pallocframe sz linkofs => False                              (**r allocate new stack frame *)
-   | Pfreeframe sz linkofs => False                               (**r deallocate stack frame and restore previous frame *)
-   | Plabel lbl => False                                                (**r define a code label *)
-   | Ploadsymbol rd id => False                                 (**r load the address of [id] *)
-   | Pcvtsw2x rd r1 => data_res_eq dr (SingleReg r1)                                 (**r sign-extend 32-bit int to 64-bit *)
-   | Pcvtuw2x rd r1 => data_res_eq dr (SingleReg r1)                                  (**r zero-extend 32-bit int to 64-bit *)
-   | Pcvtx2w rd => data_res_eq dr (SingleReg rd)                                                 (**r retype a 64-bit int as a 32-bit int *)
-   | Pbtbl r1 tbl  => False                              (**r N-way branch through a jump table *)
-   | Pbuiltin ef args res => False   (**r built-in function (pseudo) *)
-   | Pnop => False                                                             (**r no operation *)
-   | Pcfi_adjust ofs => False                                           (**r .cfi_adjust debug directive *)
-   | Pcfi_rel_offset ofs  => False                                       (**r .cfi_rel_offset debug directive *)
-   | Pincpc => data_res_eq dr (SingleReg PC) 
+   | Pallocframe sz linkofs pid => False                              (**r allocate new stack frame *)
+   | Pfreeframe sz linkofs pid => False                               (**r deallocate stack frame and restore previous frame *)
+   | Plabel lbl pid => False                                                (**r define a code label *)
+   | Ploadsymbol rd id pid => False                                 (**r load the address of [id] *)
+   | Pcvtsw2x rd r1 pid => data_res_eq dr (SingleReg pid r1)                                 (**r sign-extend 32-bit int to 64-bit *)
+   | Pcvtuw2x rd r1 pid => data_res_eq dr (SingleReg pid r1)                                  (**r zero-extend 32-bit int to 64-bit *)
+   | Pcvtx2w rd pid => data_res_eq dr (SingleReg pid rd)                                                 (**r retype a 64-bit int as a 32-bit int *)
+   | Pbtbl r1 tbl  pid => False                              (**r N-way branch through a jump table *)
+   | Pbuiltin ef args res pid => False   (**r built-in function (pseudo) *)
+   | Pnop pid => False                                                             (**r no operation *)
+   | Pcfi_adjust ofs pid => False                                           (**r .cfi_adjust debug directive *)
+   | Pcfi_rel_offset ofs  pid => False                                       (**r .cfi_rel_offset debug directive *)
+   | Pincpc pid => data_res_eq dr (SingleReg pid PC) 
+   | Memfence pid => match dr with
+                    | SingleReg pid' _ => pid = pid'
+                    | _ => False
+                    end
+    | EarlyAck txid pid => False
+    | WriteRequest txid pid a rd => data_address_src pid a dr \/ data_res_eq dr (SingleReg pid rd)
+    | ReadRequest txid pid a => data_address_src  pid a dr
+    | WriteAck txid pid => False
     end.
 
-Definition data_sink(i: instruction) (dr: data_resource) (g: genv) (ers: regset): Prop := 
+(* checks if instruction writes to dr*)
+Definition data_sink(i: instruction) (dr: data_resource) (g: genv) (ars: allregsets): Prop := 
     match i with
     (*actual*)
     (* Jump to*)
-    | Pb lbl pid => data_res_eq dr (SingleReg PC)                                                    (**r branch *)
-    | Pbc c lbl  pid => data_res_eq dr (SingleReg PC)                                    (**r conditional branch *)
-    | Pbl id sg pid => data_res_eq dr (SingleReg PC) \/ data_res_eq dr (SingleReg RA)                                    (**r jump to function and link *)
-    | Pbs id sg pid => data_res_eq dr (SingleReg PC)                                   (**r jump to function *)
-    | Pblr r sg  pid => data_res_eq dr (SingleReg PC)  \/ data_res_eq dr (SingleReg RA)                                (**r indirect jump and link *)
-    | Pbr r sg   pid => data_res_eq dr (SingleReg PC)                                   (**r indirect jump *)
-    | Pret r pid => data_res_eq dr (SingleReg PC)                                                     (**r return *)
-    | Pcbnz sz r lbl    pid => data_res_eq dr (SingleReg PC)                       (**r branch if not zero *)
-    | Pcbz sz r lbl pid => data_res_eq dr (SingleReg PC)                           (**r branch if zero *)
-    | Ptbnz sz r n lbl   pid => data_res_eq dr (SingleReg PC)               (**r branch if bit n is not zero *)
-    | Ptbz sz r n lbl pid => data_res_eq dr (SingleReg PC)                  (**r branch if bit n is zero *)
+    | Pb lbl pid => data_res_eq dr (SingleReg pid PC)                                                    (**r branch *)
+    | Pbc c lbl  pid => data_res_eq dr (SingleReg pid PC)                                    (**r conditional branch *)
+    | Pbl id sg pid => data_res_eq dr (SingleReg pid PC) \/ data_res_eq dr (SingleReg pid RA)                                    (**r jump to function and link *)
+    | Pbs id sg pid => data_res_eq dr (SingleReg pid PC)                                   (**r jump to function *)
+    | Pblr r sg  pid => data_res_eq dr (SingleReg pid PC)  \/ data_res_eq dr (SingleReg pid RA)                                (**r indirect jump and link *)
+    | Pbr r sg   pid => data_res_eq dr (SingleReg pid PC)                                   (**r indirect jump *)
+    | Pret r pid => data_res_eq dr (SingleReg pid PC)                                                     (**r return *)
+    | Pcbnz sz r lbl    pid => data_res_eq dr (SingleReg pid PC)                       (**r branch if not zero *)
+    | Pcbz sz r lbl pid => data_res_eq dr (SingleReg pid PC)                           (**r branch if zero *)
+    | Ptbnz sz r n lbl   pid => data_res_eq dr (SingleReg pid PC)               (**r branch if bit n is not zero *)
+    | Ptbz sz r n lbl pid => data_res_eq dr (SingleReg pid PC)                  (**r branch if bit n is zero *)
     (** Memory loads and stores *)
-    | Pldrw rd a pid => data_res_eq dr (SingleReg rd)                                 (**r load int32 *)
-    | Pldrw_a rd a pid => data_res_eq dr (SingleReg rd)                                (**r load int32 as any32 *)
-    | Pldrx rd a pid => data_res_eq dr (SingleReg rd)                                 (**r load int64 *)
-    | Pldrx_a rd a pid => data_res_eq dr (SingleReg rd)                                (**r load int64 as any64 *)
-    | Pldrb sz rd a pid => data_res_eq dr (SingleReg (preg_of_iregsp rd))                        (**r load int8, zero-extend *)
-    | Pldrsb sz rd a pid => data_res_eq dr (SingleReg (preg_of_iregsp rd))                      (**r load int8, sign-extend *)
-    | Pldrh sz rd a pid => data_res_eq dr (SingleReg (preg_of_iregsp rd))                       (**r load int16, zero-extend *)
-    | Pldrsh sz rd a pid => data_res_eq dr (SingleReg (preg_of_iregsp rd))                      (**r load int16, sign-extend *)
-    | Pldrzw rd a  pid => data_res_eq dr (SingleReg rd)                                 (**r load int32, zero-extend to int64 *)
-    | Pldrsw rd a pid => data_res_eq dr (SingleReg rd)                                 (**r load int32, sign-extend to int64 *)
-    | Pldp rd1 rd2 a pid => data_res_eq dr (SingleReg rd1) \/ data_res_eq dr (SingleReg rd2)                               (**r load two int64 *)
+    | Pldrw rd a pid tx_id => data_res_eq dr (SingleReg pid rd)                                 (**r load int32 *)
+    | Pldrw_a rd a pid tx_id => data_res_eq dr (SingleReg pid rd)                                (**r load int32 as any32 *)
+    | Pldrx rd a pid tx_id => data_res_eq dr (SingleReg pid rd)                                 (**r load int64 *)
+    | Pldrx_a rd a pid tx_id => data_res_eq dr (SingleReg pid rd)                                (**r load int64 as any64 *)
+    | Pldrb sz rd a pid tx_id => data_res_eq dr (SingleReg pid (preg_of_iregsp rd))                        (**r load int8, zero-extend *)
+    | Pldrsb sz rd a pid tx_id => data_res_eq dr (SingleReg pid (preg_of_iregsp rd))                      (**r load int8, sign-extend *)
+    | Pldrh sz rd a pid tx_id => data_res_eq dr (SingleReg pid (preg_of_iregsp rd))                       (**r load int16, zero-extend *)
+    | Pldrsh sz rd a pid tx_id => data_res_eq dr (SingleReg pid (preg_of_iregsp rd))                      (**r load int16, sign-extend *)
+    | Pldrzw rd a  pid tx_id => data_res_eq dr (SingleReg pid rd)                                 (**r load int32, zero-extend to int64 *)
+    | Pldrsw rd a pid tx_id => data_res_eq dr (SingleReg pid rd)                                 (**r load int32, sign-extend to int64 *)
+    | Pldp rd1 rd2 a pid tx_id => data_res_eq dr (SingleReg pid rd1) \/ data_res_eq dr (SingleReg pid rd2)                               (**r load two int64 *)
     (*TODO: check this works *)
     (* explanation: check if r is a memory address and, if so, check if a stores in r. Can check by evaluating both??? *)
-    | Pstrw rs a pid => data_address_sink a dr g ers                                 (**r store int32 *)
-    | Pstrw_a rs a pid => data_address_sink a dr g ers                                  (**r store int32 as any32 *)
-    | Pstrx rs a pid => data_address_sink a dr g ers                                    (**r store int64 *)
-    | Pstrx_a rs a pid => data_address_sink a dr g ers                                  (**r store int64 as any64 *)
-    | Pstrb rs a pid => data_address_sink a dr g ers                                   (**r store int8 *)
-    | Pstrh rs a pid => data_address_sink a dr g ers                                   (**r store int16 *)
-    | Pstp rs1 rs2 a pid => data_address_sink a dr g ers                                (**r store two int64 *)
+    | Pstrw a pid tx_id => data_address_sink a dr g ars pid                                 (**r store int32 *)
+    | Pstrw_a a pid tx_id => data_address_sink a dr g ars pid                                  (**r store int32 as any32 *)
+    | Pstrx a pid tx_id => data_address_sink a dr g ars pid                                    (**r store int64 *)
+    | Pstrx_a a pid tx_id => data_address_sink a dr g ars pid                                  (**r store int64 as any64 *)
+    | Pstrb a pid tx_id => data_address_sink a dr g ars pid                                   (**r store int8 *)
+    | Pstrh a pid tx_id => data_address_sink a dr g ars pid                                   (**r store int16 *)
+    | Pstp a pid tx_id => data_address_sink a dr g ars pid                                (**r store two int64 *)
     (** Integer arithmetic, immediate *)
-    | Paddimm sz rd r1 n  pid => data_res_eq dr (SingleReg (preg_of_iregsp rd))            (**r addition *)
-    | Psubimm sz rd r1 n pid => data_res_eq dr (SingleReg (preg_of_iregsp rd))               (**r subtraction *)
-    | Pcmpimm sz r1 n pid => data_res_eq dr (SingleReg (CR CZ))                             (**r compare *)
-    | Pcmnimm sz r1 n pid => data_res_eq dr (SingleReg (CR CZ))                              (**r compare negative *)
+    | Paddimm sz rd r1 n  pid => data_res_eq dr (SingleReg pid (preg_of_iregsp rd))            (**r addition *)
+    | Psubimm sz rd r1 n pid => data_res_eq dr (SingleReg pid (preg_of_iregsp rd))               (**r subtraction *)
+    | Pcmpimm sz r1 n pid => data_res_eq dr (SingleReg pid (CR CZ))                             (**r compare *)
+    | Pcmnimm sz r1 n pid => data_res_eq dr (SingleReg pid (CR CZ))                              (**r compare negative *)
     (** Move integer register *)
-    | Pmov rd r1 pid => data_res_eq dr (SingleReg (preg_of_iregsp rd)) 
+    | Pmov rd r1 pid => data_res_eq dr (SingleReg pid (preg_of_iregsp rd)) 
     (** Logical, immediate *)
-    | Pandimm sz rd r1 n pid => data_res_eq dr (SingleReg rd)                  (**r and *)
-    | Peorimm sz rd r1 n pid => data_res_eq dr (SingleReg rd)                  (**r xor *)
-    | Porrimm sz rd r1 n pid => data_res_eq dr (SingleReg (preg_of_iregsp rd))                  (**r or *)
-    | Ptstimm sz r1 n pid => data_res_eq dr (SingleReg (CR CZ))                             (**r and, then set flags *)
+    | Pandimm sz rd r1 n pid => data_res_eq dr (SingleReg pid rd)                  (**r and *)
+    | Peorimm sz rd r1 n pid => data_res_eq dr (SingleReg pid rd)                  (**r xor *)
+    | Porrimm sz rd r1 n pid => data_res_eq dr (SingleReg pid (preg_of_iregsp rd))                  (**r or *)
+    | Ptstimm sz r1 n pid => data_res_eq dr (SingleReg pid (CR CZ))                             (**r and, then set flags *)
     (** Move wide immediate *)
-    | Pmovz sz rd n pos  pid => data_res_eq dr (SingleReg rd)                     (**r move [n << pos] to [rd] *)
-    | Pmovn sz rd n pos  pid => data_res_eq dr (SingleReg rd)                     (**r move [NOT(n << pos)] to [rd] *)
-    | Pmovk sz rd n pos  pid => data_res_eq dr (SingleReg rd)                     (**r insert 16 bits of [n] at [pos] in rd *)
+    | Pmovz sz rd n pos  pid => data_res_eq dr (SingleReg pid rd)                     (**r move [n << pos] to [rd] *)
+    | Pmovn sz rd n pos  pid => data_res_eq dr (SingleReg pid rd)                     (**r move [NOT(n << pos)] to [rd] *)
+    | Pmovk sz rd n pos  pid => data_res_eq dr (SingleReg pid rd)                     (**r insert 16 bits of [n] at [pos] in rd *)
     (** PC-relative addressing *)
-    | Padrp rd id ofs pid => data_res_eq dr (SingleReg rd)                        (**r set [rd] to high address of [id + ofs] *)
-    | Paddadr rd r1 id ofs pid => data_res_eq dr (SingleReg rd)             (**r add the low address of [id + ofs] *)
+    | Padrp rd id ofs pid => data_res_eq dr (SingleReg pid rd)                        (**r set [rd] to high address of [id + ofs] *)
+    | Paddadr rd r1 id ofs pid => data_res_eq dr (SingleReg pid rd)             (**r add the low address of [id + ofs] *)
     (** Bit-field operations *)
-    | Psbfiz sz rd r1 r s pid => data_res_eq dr (SingleReg rd)           (**r sign extend and shift left *)
-    | Psbfx sz rd r1 r s pid => data_res_eq dr (SingleReg rd)           (**r shift right and sign extend *)
-    | Pubfiz sz rd r1 r s pid => data_res_eq dr (SingleReg rd)           (**r zero extend and shift left *)
-    | Pubfx sz rd r1 r s pid => data_res_eq dr (SingleReg rd)           (**r shift right and zero extend *)
+    | Psbfiz sz rd r1 r s pid => data_res_eq dr (SingleReg pid rd)           (**r sign extend and shift left *)
+    | Psbfx sz rd r1 r s pid => data_res_eq dr (SingleReg pid rd)           (**r shift right and sign extend *)
+    | Pubfiz sz rd r1 r s pid => data_res_eq dr (SingleReg pid rd)           (**r zero extend and shift left *)
+    | Pubfx sz rd r1 r s pid => data_res_eq dr (SingleReg pid rd)           (**r shift right and zero extend *)
     (** Integer arithmetic, shifted register *)
-    | Padd sz rd r1 r2 s pid => data_res_eq dr (SingleReg rd)    (**r addition *)
-    | Psub sz rd r1 r2 s pid => data_res_eq dr (SingleReg rd)   (**r subtraction *)
-    | Pcmp sz r1 r2 s pid => data_res_eq dr (SingleReg (CR CZ))              (**r compare *)
-    | Pcmn sz r1 r2 s pid => data_res_eq dr (SingleReg (CR CZ))              (**r compare negative *)
+    | Padd sz rd r1 r2 s pid => data_res_eq dr (SingleReg pid rd)    (**r addition *)
+    | Psub sz rd r1 r2 s pid => data_res_eq dr (SingleReg pid rd)   (**r subtraction *)
+    | Pcmp sz r1 r2 s pid => data_res_eq dr (SingleReg pid (CR CZ))              (**r compare *)
+    | Pcmn sz r1 r2 s pid => data_res_eq dr (SingleReg pid (CR CZ))              (**r compare negative *)
     (** Integer arithmetic, extending register *)
-    | Paddext rd r1 r2 x pid => data_res_eq dr (SingleReg (preg_of_iregsp rd))        (**r int64-int32 add *)
-    | Psubext rd r1 r2 x pid => data_res_eq dr (SingleReg (preg_of_iregsp rd))        (**r int64-int32 sub *)
-    | Pcmpext r1 r2 x pid => data_res_eq dr (SingleReg (CR CZ))                      (**r int64-int32 cmp *)
-    | Pcmnext r1 r2 x pid => data_res_eq dr (SingleReg (CR CZ))                       (**r int64-int32 cmn *)
+    | Paddext rd r1 r2 x pid => data_res_eq dr (SingleReg pid (preg_of_iregsp rd))        (**r int64-int32 add *)
+    | Psubext rd r1 r2 x pid => data_res_eq dr (SingleReg pid (preg_of_iregsp rd))        (**r int64-int32 sub *)
+    | Pcmpext r1 r2 x pid => data_res_eq dr (SingleReg pid (CR CZ))                      (**r int64-int32 cmp *)
+    | Pcmnext r1 r2 x pid => data_res_eq dr (SingleReg pid (CR CZ))                       (**r int64-int32 cmn *)
     (** Logical, shifted register *)
-    | Pand sz rd r1 r2 s pid => data_res_eq dr (SingleReg rd)   (**r and *)
-    | Pbic sz rd r1 r2 s pid => data_res_eq dr (SingleReg rd)   (**r and-not *)
-    | Peon sz rd r1 r2 s pid => data_res_eq dr (SingleReg rd)   (**r xor-not *)
-    | Peor sz rd r1 r2 s pid => data_res_eq dr (SingleReg rd)   (**r xor *)
-    | Porr sz rd r1 r2 s pid => data_res_eq dr (SingleReg rd)   (**r or *)
-    | Porn sz rd r1 r2 s pid => data_res_eq dr (SingleReg rd)   (**r or-not *)
-    | Ptst sz r1 r2 s pid => data_res_eq dr (SingleReg (CR CZ))                (**r and, then set flags *)
+    | Pand sz rd r1 r2 s pid => data_res_eq dr (SingleReg pid rd)   (**r and *)
+    | Pbic sz rd r1 r2 s pid => data_res_eq dr (SingleReg pid rd)   (**r and-not *)
+    | Peon sz rd r1 r2 s pid => data_res_eq dr (SingleReg pid rd)   (**r xor-not *)
+    | Peor sz rd r1 r2 s pid => data_res_eq dr (SingleReg pid rd)   (**r xor *)
+    | Porr sz rd r1 r2 s pid => data_res_eq dr (SingleReg pid rd)   (**r or *)
+    | Porn sz rd r1 r2 s pid => data_res_eq dr (SingleReg pid rd)   (**r or-not *)
+    | Ptst sz r1 r2 s pid => data_res_eq dr (SingleReg pid (CR CZ))                (**r and, then set flags *)
     (** Variable shifts *)
-    | Pasrv sz rd r1 r2 pid => data_res_eq dr (SingleReg rd)                         (**r arithmetic right shift *)
-    | Plslv sz rd r1 r2 pid => data_res_eq dr (SingleReg rd)                         (**r left shift *)
-    | Plsrv sz rd r1 r2 pid => data_res_eq dr (SingleReg rd)                         (**r logical right shift *)
-    | Prorv sz rd r1 r2 pid => data_res_eq dr (SingleReg rd)                        (**r rotate right *)
+    | Pasrv sz rd r1 r2 pid => data_res_eq dr (SingleReg pid rd)                         (**r arithmetic right shift *)
+    | Plslv sz rd r1 r2 pid => data_res_eq dr (SingleReg pid rd)                         (**r left shift *)
+    | Plsrv sz rd r1 r2 pid => data_res_eq dr (SingleReg pid rd)                         (**r logical right shift *)
+    | Prorv sz rd r1 r2 pid => data_res_eq dr (SingleReg pid rd)                        (**r rotate right *)
     (** Bit operations *)
-    | Pcls sz rd r1 pid => data_res_eq dr (SingleReg rd)                                     (**r count leading sign bits *)
-    | Pclz sz rd r1 pid => data_res_eq dr (SingleReg rd)                                     (**r count leading zero bits *)
-    | Prev sz rd r1 pid => data_res_eq dr (SingleReg rd)                                    (**r reverse bytes *)
-    | Prev16 sz rd r1 pid => data_res_eq dr (SingleReg rd)                                   (**r reverse bytes in each 16-bit word *)
-    | Prbit sz rd r1  pid => data_res_eq dr (SingleReg rd)                                   (**r reverse bits *)
+    | Pcls sz rd r1 pid => data_res_eq dr (SingleReg pid rd)                                     (**r count leading sign bits *)
+    | Pclz sz rd r1 pid => data_res_eq dr (SingleReg pid rd)                                     (**r count leading zero bits *)
+    | Prev sz rd r1 pid => data_res_eq dr (SingleReg pid rd)                                    (**r reverse bytes *)
+    | Prev16 sz rd r1 pid => data_res_eq dr (SingleReg pid rd)                                   (**r reverse bytes in each 16-bit word *)
+    | Prbit sz rd r1  pid => data_res_eq dr (SingleReg pid rd)                                   (**r reverse bits *)
     (** Conditional data processing *)
-    | Pcsel rd r1 r2 c  pid => data_res_eq dr (SingleReg rd)                     (**r int conditional move *)
-    | Pcset rd c pid => data_res_eq dr (SingleReg rd)                                     (**r set to 1/0 if cond is true/false *)
+    | Pcsel rd r1 r2 c  pid => data_res_eq dr (SingleReg pid rd)                     (**r int conditional move *)
+    | Pcset rd c pid => data_res_eq dr (SingleReg pid rd)                                     (**r set to 1/0 if cond is true/false *)
     (*
     | Pcsetm rd c                                   (**r set to -1/0 if cond is true/false *)
     *)
     (** Integer multiply/divide *)
-    | Pmadd sz rd r1 r2 r3 pid => data_res_eq dr (SingleReg rd)             (**r multiply-add *)
-    | Pmsub sz rd r1 r2 r3 pid => data_res_eq dr (SingleReg rd)             (**r multiply-sub *)
-    | Psmulh rd r1 r2 pid => data_res_eq dr (SingleReg rd)                                   (**r signed multiply high *)
-    | Pumulh rd r1 r2 pid => data_res_eq dr (SingleReg rd)                                    (**r unsigned multiply high *)
-    | Psdiv sz rd r1 r2 pid => data_res_eq dr (SingleReg rd)                        (**r signed division *)
-    | Pudiv sz rd r1 r2 pid => data_res_eq dr (SingleReg rd)                        (**r unsigned division *)
+    | Pmadd sz rd r1 r2 r3 pid => data_res_eq dr (SingleReg pid rd)             (**r multiply-add *)
+    | Pmsub sz rd r1 r2 r3 pid => data_res_eq dr (SingleReg pid rd)             (**r multiply-sub *)
+    | Psmulh rd r1 r2 pid => data_res_eq dr (SingleReg pid rd)                                   (**r signed multiply high *)
+    | Pumulh rd r1 r2 pid => data_res_eq dr (SingleReg pid rd)                                    (**r unsigned multiply high *)
+    | Psdiv sz rd r1 r2 pid => data_res_eq dr (SingleReg pid rd)                        (**r signed division *)
+    | Pudiv sz rd r1 r2 pid => data_res_eq dr (SingleReg pid rd)                        (**r unsigned division *)
     (** Floating-point loads and stores *)
-    | Pldrs rd a pid => data_res_eq dr (SingleReg rd)                                   (**r load float32 (single precision) *)
-    | Pldrd rd a pid => data_res_eq dr (SingleReg rd)                                  (**r load float64 (double precision) *)
-    | Pldrd_a rd a pid => data_res_eq dr (SingleReg rd)                                (**r load float64 as any64 *)
-    | Pstrs rs a pid => data_address_sink a dr g ers                                   (**r store float32 *)
-    | Pstrd rs a pid => data_address_sink a dr g ers                                   (**r store float64 *)
-    | Pstrd_a rs a pid => data_address_sink a dr g ers                                (**r store float64 as any64 *)
+    | Pldrs rd a pid tx_id => data_res_eq dr (SingleReg pid rd)                                   (**r load float32 (single precision) *)
+    | Pldrd rd a pid tx_id => data_res_eq dr (SingleReg pid rd)                                  (**r load float64 (double precision) *)
+    | Pldrd_a rd a pid tx_id => data_res_eq dr (SingleReg pid rd)                                (**r load float64 as any64 *)
+    | Pstrs a pid tx_id => data_address_sink a dr g ars pid                                  (**r store float32 *)
+    | Pstrd a pid tx_id =>  data_address_sink a dr g ars pid                                (**r store float64 *)
+    | Pstrd_a a pid tx_id => data_address_sink a dr g ars pid                             (**r store float64 as any64 *)
     (** Floating-point move *)
-    | Pfmov rd r1 pid => data_res_eq dr (SingleReg rd) 
-    | Pfmovimms rd f  pid => data_res_eq dr (SingleReg rd)                                (**r load float32 constant *)
-    | Pfmovimmd rd f  pid => data_res_eq dr (SingleReg rd)                                  (**r load float64 constant *)
-    | Pfmovi fsz rd r1 pid => data_res_eq dr (SingleReg rd)                         (**r copy int reg to FP reg *)
+    | Pfmov rd r1 pid => data_res_eq dr (SingleReg pid rd) 
+    | Pfmovimms rd f  pid => data_res_eq dr (SingleReg pid rd)                                (**r load float32 constant *)
+    | Pfmovimmd rd f  pid => data_res_eq dr (SingleReg pid rd)                                  (**r load float64 constant *)
+    | Pfmovi fsz rd r1 pid => data_res_eq dr (SingleReg pid rd)                         (**r copy int reg to FP reg *)
     (** Floating-point conversions *)
-    | Pfcvtds rd r1  pid => data_res_eq dr (SingleReg rd)                                            (**r convert float32 to float64 *)
-    | Pfcvtsd rd r1  pid => data_res_eq dr (SingleReg rd)                                           (**r convert float64 to float32 *)
-    | Pfcvtzs isz fsz rd r1 pid => data_res_eq dr (SingleReg rd)            (**r convert float to signed int *)
-    | Pfcvtzu isz fsz rd r1 pid => data_res_eq dr (SingleReg rd)           (**r convert float to unsigned int *)
-    | Pscvtf fsz isz rd r1 pid => data_res_eq dr (SingleReg rd)             (**r convert signed int to float *)
-    | Pucvtf fsz isz rd r1 pid => data_res_eq dr (SingleReg rd)            (**r convert unsigned int to float *)
+    | Pfcvtds rd r1  pid => data_res_eq dr (SingleReg pid rd)                                            (**r convert float32 to float64 *)
+    | Pfcvtsd rd r1  pid => data_res_eq dr (SingleReg pid rd)                                           (**r convert float64 to float32 *)
+    | Pfcvtzs isz fsz rd r1 pid => data_res_eq dr (SingleReg pid rd)            (**r convert float to signed int *)
+    | Pfcvtzu isz fsz rd r1 pid => data_res_eq dr (SingleReg pid rd)           (**r convert float to unsigned int *)
+    | Pscvtf fsz isz rd r1 pid => data_res_eq dr (SingleReg pid rd)             (**r convert signed int to float *)
+    | Pucvtf fsz isz rd r1 pid => data_res_eq dr (SingleReg pid rd)            (**r convert unsigned int to float *)
     (** Floating-point arithmetic *)
-    | Pfabs sz rd r1 pid => data_res_eq dr (SingleReg rd)                                    (**r absolute value *)
-    | Pfneg sz rd r1 pid => data_res_eq dr (SingleReg rd)                                    (**r negation *)
-    | Pfsqrt sz rd r1 pid => data_res_eq dr (SingleReg rd)                                   (**r square root *)
-    | Pfadd sz rd r1 r2 pid => data_res_eq dr (SingleReg rd)                                (**r addition *)
-    | Pfdiv sz rd r1 r2  pid => data_res_eq dr (SingleReg rd)                                (**r division *)
-    | Pfmul sz rd r1 r2  pid => data_res_eq dr (SingleReg rd)                               (**r multiplication *)
-    | Pfnmul sz rd r1 r2 pid => data_res_eq dr (SingleReg rd)                               (**r multiply-negate *)
-    | Pfsub sz rd r1 r2 pid => data_res_eq dr (SingleReg rd)                                 (**r subtraction *)
-    | Pfmadd sz rd r1 r2 r3 pid => data_res_eq dr (SingleReg rd)                             (**r [rd = r3 + r1 * r2] *)
-    | Pfmsub sz rd r1 r2 r3 pid => data_res_eq dr (SingleReg rd)                             (**r [rd = r3 - r1 * r2] *)
-    | Pfnmadd sz rd r1 r2 r3 pid => data_res_eq dr (SingleReg rd)                            (**r [rd = - r3 - r1 * r2] *)
-    | Pfnmsub sz rd r1 r2 r3 pid => data_res_eq dr (SingleReg rd)                           (**r [rd = - r3 + r1 * r2] *)
-    | Pfmax sz rd r1 r2 pid => data_res_eq dr (SingleReg rd)                                (**r maximum *)
-    | Pfmin sz rd r1 r2 pid => data_res_eq dr (SingleReg rd)                                (**r minimum *)
+    | Pfabs sz rd r1 pid => data_res_eq dr (SingleReg pid rd)                                    (**r absolute value *)
+    | Pfneg sz rd r1 pid => data_res_eq dr (SingleReg pid rd)                                    (**r negation *)
+    | Pfsqrt sz rd r1 pid => data_res_eq dr (SingleReg pid rd)                                   (**r square root *)
+    | Pfadd sz rd r1 r2 pid => data_res_eq dr (SingleReg pid rd)                                (**r addition *)
+    | Pfdiv sz rd r1 r2  pid => data_res_eq dr (SingleReg pid rd)                                (**r division *)
+    | Pfmul sz rd r1 r2  pid => data_res_eq dr (SingleReg pid rd)                               (**r multiplication *)
+    | Pfnmul sz rd r1 r2 pid => data_res_eq dr (SingleReg pid rd)                               (**r multiply-negate *)
+    | Pfsub sz rd r1 r2 pid => data_res_eq dr (SingleReg pid rd)                                 (**r subtraction *)
+    | Pfmadd sz rd r1 r2 r3 pid => data_res_eq dr (SingleReg pid rd)                             (**r [rd = r3 + r1 * r2] *)
+    | Pfmsub sz rd r1 r2 r3 pid => data_res_eq dr (SingleReg pid rd)                             (**r [rd = r3 - r1 * r2] *)
+    | Pfnmadd sz rd r1 r2 r3 pid => data_res_eq dr (SingleReg pid rd)                            (**r [rd = - r3 - r1 * r2] *)
+    | Pfnmsub sz rd r1 r2 r3 pid => data_res_eq dr (SingleReg pid rd)                           (**r [rd = - r3 + r1 * r2] *)
+    | Pfmax sz rd r1 r2 pid => data_res_eq dr (SingleReg pid rd)                                (**r maximum *)
+    | Pfmin sz rd r1 r2 pid => data_res_eq dr (SingleReg pid rd)                                (**r minimum *)
     (** Floating-point comparison *)
-    | Pfcmp sz r1 r2 pid => data_res_eq dr (SingleReg (CR CZ))                                   (**r compare [r1] and [r2] *)
-    | Pfcmp0 sz r1 pid => data_res_eq dr (SingleReg (CR CZ))                                      (**r compare [r1] and [+0.0] *)
+    | Pfcmp sz r1 r2 pid => data_res_eq dr (SingleReg pid (CR CZ))                                   (**r compare [r1] and [r2] *)
+    | Pfcmp0 sz r1 pid => data_res_eq dr (SingleReg pid (CR CZ))                                      (**r compare [r1] and [+0.0] *)
     (** Floating-point conditional select *)
-    | Pfsel rd r1 r2 cond pid => data_res_eq dr (SingleReg rd) 
+    | Pfsel rd r1 r2 cond pid => data_res_eq dr (SingleReg pid rd) 
     (** Pseudo-instructions *)
     | Pallocframe sz linkofs pid => False                            (**r allocate new stack frame *)
     | Pfreeframe sz linkofs pid => False                             (**r deallocate stack frame and restore previous frame *)
     | Plabel lbl pid => False                                              (**r define a code label *)
-    | Ploadsymbol rd id pid => data_res_eq dr (SingleReg rd)                                (**r load the address of [id] *)
-    | Pcvtsw2x rd r1 pid => data_res_eq dr (SingleReg rd)                                    (**r sign-extend 32-bit int to 64-bit *)
-    | Pcvtuw2x rd r1 pid => data_res_eq dr (SingleReg rd)                                    (**r zero-extend 32-bit int to 64-bit *)
-    | Pcvtx2w rd pid => data_res_eq dr (SingleReg rd)                                                 (**r retype a 64-bit int as a 32-bit int *)
+    | Ploadsymbol rd id pid => data_res_eq dr (SingleReg pid rd)                                (**r load the address of [id] *)
+    | Pcvtsw2x rd r1 pid => data_res_eq dr (SingleReg pid rd)                                    (**r sign-extend 32-bit int to 64-bit *)
+    | Pcvtuw2x rd r1 pid => data_res_eq dr (SingleReg pid rd)                                    (**r zero-extend 32-bit int to 64-bit *)
+    | Pcvtx2w rd pid => data_res_eq dr (SingleReg pid rd)                                                 (**r retype a 64-bit int as a 32-bit int *)
     | Pbtbl r1 tbl  pid => False                            (**r N-way branch through a jump table *)
     | Pbuiltin ef args res pid => False (**r built-in function (pseudo) *)
     | Pnop pid => False                                                           (**r no operation *)
     | Pcfi_adjust ofs pid => False                                         (**r .cfi_adjust debug directive *)
     | Pcfi_rel_offset ofs  pid => False                                     (**r .cfi_rel_offset debug directive *)
-    | Pincpc pid => data_res_eq dr (SingleReg PC) 
+    | Pincpc pid => data_res_eq dr (SingleReg pid PC) 
+    | Memfence pid => match dr with
+                    | SingleReg pid' _ => pid = pid'
+                    | _ => False
+                    end
+    | EarlyAck txid pid => False
+    | WriteRequest txid pid a rd => False
+    | ReadRequest txid pid a => False
+    | WriteAck txid pid => False
 end.
 
 
@@ -1744,12 +1765,17 @@ Proof. intros. apply H. exists d. split; apply data_res_isomorphism.
 Qed.
 
 
- Remark regs_are_different_resources: forall r1 r2, ~
- (exists r : data_resource, data_res_eq r (SingleReg r1) /\ data_res_eq r (SingleReg r2)) -> r1 <> r2.
+ Remark regs_are_different_resources: forall r1 r2 (pid: processor_id),
+  ~(exists r : data_resource, data_res_eq r (SingleReg pid r1) /\ data_res_eq r (SingleReg pid r2)) -> r1 <> r2.
  Proof.
- unfold not. intros. apply H. exists (SingleReg r1). 
+ unfold not. intros. apply H. exists (SingleReg pid r1). 
  split. try apply data_res_isomorphism. 
 rewrite <- H0; apply data_res_isomorphism.
+Qed.
+
+Remark different_procs_different_resources: forall r pid1 pid2, 
+~ (exists dr : data_resource, data_res_eq dr (SingleReg pid1 r) /\ data_res_eq dr (SingleReg pid2 r)) -> pid1 <> pid2.
+Proof. unfold not. intros. apply H. exists (SingleReg pid1 r). subst. split; apply data_res_isomorphism.
 Qed.
 
 Remark resources_are_different_resources: forall r1 r2,  ~
@@ -1762,9 +1788,6 @@ Qed.
 
 Remark VInt_eq: forall i1 i2, Vint i1 = Vint i2 -> i1 = i2.
 Proof. intros. inv H. reflexivity. Qed.
-
-(* Theorem reorder: forall  g (f: function) (i1 i2: instruction)  (rs_i rs_t1 rs_t2 rs_f: regset)  (m_i m_t1 m_t2 m_f: mem), ~data_dependence i1 i2 g rs_i -> exec_instr g f i1 rs_i m_i = Next rs_t1 m_t1 -> exec_instr g f i2 rs_i m_i = Next rs_t2 m_t2 -> exec_instr g f i2 rs_t1 m_t1 = Next rs_f m_f -> exec_instr g f i1 rs_t2 m_t2 = Next rs_f m_f. *)
-(* Theorem reorder: forall g (f: function) (i1 i2: instruction) (rs_i: regset) (m_i: mem), ~data_dependence i1 i2 g rs_i -> i1 = exec_instr g f i2 (exec_instr g f i1 (Next rs_i m_i)) = exec_instr g f i1 (exec_instr g f i2 (Next rs_i m_i)). *)
 
 Ltac Super_Equalities :=
   match goal with
@@ -1779,7 +1802,9 @@ Ltac Super_Equalities :=
   end.
 
 
-Theorem reorder: forall g (f: function) arg11 arg12 (i2: instruction) (rs_i: regset) (m_i: mem), ~data_dependence (Pmov arg11 arg12) i2 g rs_i -> exec_instr g f i2  (exec_instr g f (Pmov arg11 arg12)  (Next rs_i m_i)) = exec_instr g f (Pmov arg11 arg12)  (exec_instr g f i2  (Next rs_i m_i)).
+Theorem reorder: forall g (f: function)(i1 i2: instruction) (ars_i: allregsets) (m_i: mem),
+     ~data_dependence i1 i2 g ars_i -> 
+     eval_memsim_instr g f i2  (eval_memsim_instr g f i1 ars_i ) = eval_memsim_instr g f (Pmov arg11 arg12)  (eval_memsim_instr g f i2  (Next ars_i m_i)).
 Proof. intros. 
 (* Definition unwrapping*)
 unfold data_dependence in H. unfold data_sink, data_source in H. apply not_or_or_and in H; destruct H; destruct H0. destruct i2.
