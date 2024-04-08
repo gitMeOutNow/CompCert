@@ -1781,7 +1781,7 @@ intros. unfold not. intros. inv H0. contradiction.
 Qed.
 
 
-Remark neq_comm_wwtd: forall (A:Type) (a b: A), a <> b -> b <> a.
+Remark neq_comm: forall (A:Type) (a b: A), a <> b -> b <> a.
 Proof.
 intros. unfold not in *. intro. apply H. symmetry. apply H0.
 Qed.
@@ -1817,7 +1817,7 @@ Qed.
 Ltac reorder_solver :=
     match goal with
     | [H_a: ?a |- ?a] => assumption (*Terminal*)
-    | [H_not_comm: ?a <> ?b |- ?b <> ?a] => apply neq_comm_wwtd in H_not_comm; assumption (*Terminal*)
+    | [H_not_comm: ?a <> ?b |- ?b <> ?a] => apply neq_comm in H_not_comm; assumption (*Terminal*)
     | [ |- pair ?a ?b <> pair ?c ?d] => apply tuple_bneq; intro H_contra; discriminate (*Terminal*)
     (* Boring transitivity*)
     | [H_l: ?a = ?b, H_r: ?b = ?c |- _] => rewrite H_l in H_r; try inversion H_r; subst; reorder_solver (* Semiterminal*)
@@ -1827,7 +1827,7 @@ Ltac reorder_solver :=
     | [H_dne:  ~(exists r : data_resource,
     data_res_eq r (SingleReg ?pid1 ?r1) /\ data_res_eq r (SingleReg ?pid2 ?r1))
      |- not (eq (pair _ ?r1) (pair _ ?r1))] => apply tuple_fneq; apply different_procs_different_resources in H_dne; reorder_solver (* Nonterminal*)
-     (*Break down gso. Need to be very careful with this - it can lead to unbounded recursion*)
+     (*Break down gso. Need to be very careful with this - it can lead to unbounded recursion. This isn't an issue in the current version of this ltac*)
      | [ H_raw: context[PRmap.set ?k1 ?v ?map ?k2]  |- _] => rewrite PRmap.gso in H_raw; reorder_solver (* Nonterminal *)
      | _ => idtac
 end.
