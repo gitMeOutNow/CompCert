@@ -47,7 +47,7 @@ Module PRmap := EMap(PREq).
 (** * Operational semantics *)
 
 (** The semantics operates over a single mapping from registers
-  (type [preg]) to values.  We maintain (but do not enforce)
+  (type [pair pid preg]) to values.  We maintain (but do not enforce)
   the convention that integer registers are mapped to values of
   type [Tint], float registers to values of type [Tfloat],
   and condition bits to either [Vzero] or [Vone]. *)
@@ -908,9 +908,6 @@ match o with
     | MemSimStuck => MemSimStuck    
 end.
 
-
-(** Execution of the instruction at [rs@PC]. *)
-
 End RELSEM.
 
 
@@ -1167,13 +1164,6 @@ Tactic Notation "destruct" "matches" := destruct_goal_matches.
 Definition regs_identical (ars: allregsets) (pid: processor_id) (rs: regset): Prop :=
     forall r, rs r = ars@(pid, r).
 
-Remark vptr_equality: forall b1 b2 o1 o2, b1=b2 /\ o1 = o2 -> Vptr b1 o1 = Vptr b2 o2.
-Proof. intros. destruct H. rewrite H. rewrite H0. reflexivity. Qed.
-
-Remark inverse_vptr_equality: forall b1 b2 o1 o2,  Vptr b1 o1 = Vptr b2 o2 -> b1=b2 /\ o1 = o2.
-Proof. intros. inversion H. split; reflexivity. Qed.
-
-
 Remark tup_equal: forall (a c: processor_id) (b d: preg), a = c /\ b = d -> (a, b) = (c, d).
 Proof. intros. destruct H. rewrite H. rewrite H0. reflexivity. Qed.
 
@@ -1182,28 +1172,7 @@ Proof.
     intros. rewrite H0 in H. apply H. reflexivity.
 Qed.
 
-Remark set_method_semantic_equality: forall rs (pid: processor_id) (r1 r2: preg) (v: val)  ars, 
-    regs_identical ars pid rs ->  regs_identical ars@(pid, r1)<-v pid rs#r1<-v.
-    Proof. 
-    intros. unfold regs_identical in H. unfold regs_identical. intro.
-    
-    unfold Asm.Pregmap.set. unfold PRmap.set. 
-    destruct (PregEq.eq r r1).
-    - subst. destruct (PREq.eq (pid, r1)(pid, r1)). reflexivity. contradiction.
-    - destruct (PREq.eq (pid, r) (pid, r1)). inversion e. contradiction. apply H.
-Qed. 
-
-Remark set_method_sem_eq_form2: forall (pid: processor_id)(pr k: preg)(rs: regset)(ars: allregsets)(v: val),
- regs_identical ars pid rs -> rs # k <- v pr = ars @ (pid, k) <- v (pid, pr).
- Proof.
-    intros. unfold regs_identical in H. unfold Asm.Pregmap.set. unfold PRmap.set. destruct (PregEq.eq k pr).
-    - subst. destruct (PREq.eq (pid, pr) (pid, pr)). destruct (PregEq.eq pr pr). reflexivity. contradiction.
-    unfold not in n. contradiction.
-    -destruct (PregEq.eq pr k). rewrite <- e in n. contradiction. destruct (PREq.eq (pid, pr) (pid, k)).
-    inversion e. contradiction. apply H.
- Qed.
-
- Remark set_method_sem_eq_form3: forall (pid: processor_id)(pr k: preg)(rs: regset)(ars: allregsets)(v1 v2: val),
+ Remark set_method_sem_eq: forall (pid: processor_id)(pr k: preg)(rs: regset)(ars: allregsets)(v1 v2: val),
  regs_identical ars pid rs -> v1 = v2 -> rs # k <- v1 pr = ars @ (pid, k) <- v2 (pid, pr).
  Proof.
     intros. unfold regs_identical in H. unfold Asm.Pregmap.set. rewrite <- H0. unfold PRmap.set. destruct (PregEq.eq k pr).
@@ -1315,10 +1284,6 @@ Ltac temp_solver :=
         |- False] => assert (Hri: regs_identical (ars @ (pid, r1) <- v) pid (rs # r1 <- v)); try apply id_writes_preserve_id_regs; auto; try apply ri;
         specialize (Hri r2); rewrite <- Hri in H2; rewrite -> H2 in H1; inversion H1
     end.
-(* 
-Definition early_ack_stores_same_val (eaw: early_ack_writes) (m: mem)(pid: processor_id) (a: val) (v: val): Prop :=
-    EWmap.get (pid, a) eaw = Some v -> (mem a) = v.
- *)
 
  Definition no_early_acks (eaw: early_ack_writes)(pid: processor_id): Prop :=
     forall a, eaw (pid, a) = None.
@@ -1326,7 +1291,7 @@ Definition early_ack_stores_same_val (eaw: early_ack_writes) (m: mem)(pid: proce
 Theorem asm_identical_to_forward_sim: forall (pr: preg) (g: genv)(f: function) (i: Asm.instruction) (rs: regset) (ars: allregsets) (m: mem) (pid: processor_id) (ifm: in_flight_mem_ops) (eaw: early_ack_writes), 
     no_early_acks eaw pid -> regs_identical ars pid rs -> end_state_equals_asm_memsim pr (exec_instr g f i rs  m)  (eval_memsim_chain g f (asm_to_memsim i pid 0) ars m ifm eaw) pid .
 Proof.
-intros. pose proof H0 as ri. unfold no_early_acks in H. unfold regs_identical in H0.  unfold end_state_equals_asm_memsim. remember i as orig_i eqn:H_orig_i. rewrite -> H_orig_i. destruct i; simpl; try unfold Asm.goto_label; try unfold goto_label; try unfold Asm.eval_testcond; try unfold eval_testcond; try unfold Asm.exec_load; try unfold read_ack; try unfold read_request; try unfold Asm.exec_store; try unfold write_ack; try unfold write_request; try unfold early_ack_write; unfold serialize_write; try unfold Mem.loadv; try unfold eval_addressing; try unfold Asm.eval_addressing; unfold Asm.compare_long; unfold compare_long; unfold Asm.compare_int; unfold compare_int; unfold Asm.ir0w; unfold ir0w; unfold Asm.ir0x; unfold ir0x; unfold Asm.compare_single; unfold compare_single; unfold Asm.compare_float; unfold compare_float;destruct matches; try split; try unfold nextinstr; try apply set_method_sem_eq_form3; sem_eq_solver. 
+intros. pose proof H0 as ri. unfold no_early_acks in H. unfold regs_identical in H0.  unfold end_state_equals_asm_memsim. remember i as orig_i eqn:H_orig_i. rewrite -> H_orig_i. destruct i; simpl; try unfold Asm.goto_label; try unfold goto_label; try unfold Asm.eval_testcond; try unfold eval_testcond; try unfold Asm.exec_load; try unfold read_ack; try unfold read_request; try unfold Asm.exec_store; try unfold write_ack; try unfold write_request; try unfold early_ack_write; unfold serialize_write; try unfold Mem.loadv; try unfold eval_addressing; try unfold Asm.eval_addressing; unfold Asm.compare_long; unfold compare_long; unfold Asm.compare_int; unfold compare_int; unfold Asm.ir0w; unfold ir0w; unfold Asm.ir0x; unfold ir0x; unfold Asm.compare_single; unfold compare_single; unfold Asm.compare_float; unfold compare_float;destruct matches; try split; try unfold nextinstr; try apply set_method_sem_eq; sem_eq_solver. 
 
 (*Solves 21/26 proof by contradiction of Pbtbl*)
 all: try temp_solver. 
@@ -1896,124 +1861,5 @@ try (apply hazard_elimination in H;  contradiction +  unfold not;  intros;  disc
 try (apply hazard_elimination in H0;  contradiction +  unfold not;  intros;  discriminate H2).
 
 -unfold output_data_eq. unfold eval_memsim_instr. unfold eval_memsim_instr_internal. unfold eval_testcond. unfold goto_label. destruct matches; try rewrite Heqv; try reflexivity; reorder_solver. apply four_and_shortcut; try reflexivity. rewrite PRmap.gscsc. reflexivity. reorder_solver.
-Focus 102. reorder_solver. rewrite PRmap.gso in Heqv0. rewrite Heqv1 in Heqv0. inversion Heqv0. subst. rewrite Heqb0 in Heqb1. inversion Heqb1.  reorder_solver. reorder_solver. 
-reorder_solver. reorder_solver.
-
-
-unfold eval_memsim_instr; unfold eval_memsim_instr_internal;  unfold eval_testcond; unfold goto_label. destruct matches.
-reorder_solver.
-reorder_solver. reorder_solver.
-
-(*Filter out impossible cases, apply set commutativity, and finish.
- We can't do this in ltac bc matching is annoying*)
-reorder_solver; try rewrite PRmap.gscsc; try reflexivity; reorder_solver.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-Unset Printing Notations. rewrite PRmap.gscsc. reflexivity. reorder_solver.
-
-reorder_solver. reorder_solver. reorder_solver. reorder_solver. reorder_solver. reorder_solver. reorder_solver. Unset Printing Notations. test_solver. reorder_solver. reorder_solver. simpl.  rewrite Heqv in Heqv1. inversion Heqv1. apply tuple_fneq. apply different_procs_different_resources in H1. apply neq_comm_wwtd. apply H1.  
-rewrite PRmap.gso in Heqv1. rewrite Heqv in Heqv1. discriminate. apply tuple_fneq. apply different_procs_different_resources in H1. apply neq_comm_wwtd. apply H1.
-rewrite PRmap.gso in Heqv1. rewrite Heqv in Heqv1. discriminate. apply tuple_fneq. apply different_procs_different_resources in H1. apply neq_comm_wwtd. apply H1.
-Unset Printing Notations. Unset Printing Notations.
-
-
-(* Changing the order will not change the end result (Stuck/Next)*) 
-apply hazard_elimination in H.
-
-(* unfold data_dependence in H. unfold data_sink, data_source in H. destruct i1. destruct i2; apply not_or_or_and in H; destruct H; destruct H0; *)
-(* Remove data hazards that hit the same singleton register (eg PC, CR)*)
-try (apply hazard_elimination in H1;  contradiction +  unfold not;  intros;  discriminate H2);
-try (apply hazard_elimination in H;  contradiction +  unfold not;  intros;  discriminate H2);
-try (apply hazard_elimination in H0;  contradiction +  unfold not;  intros;  discriminate H2);
-
-
-
-(* Remove data hazards that hit True*)
-try (apply hazard_elimination_identity in H; contradiction + unfold not; intros; discriminate H2);
-
-try (apply hazard_elimination_identity in H0; contradiction + unfold not; intros; discriminate H2);
-
-try (apply hazard_elimination_identity in H1; contradiction + unfold not; intros; discriminate H2); auto;
-
-auto;
-
-(*Prove data vals different*)
-(* apply regs_are_different_resources in H1 || clear H1; apply regs_are_different_resources in H0 || clear H0; apply regs_are_different_resources in H || clear H; *)
-try apply regs_are_different_resources; try apply regs_are_different_resources in H0; try apply regs_are_different_resources in H;  
-unfold exec_instr; unfold nextinstr; unfold goto_label; unfold eval_testcond; destruct matches; auto; 
-(* Changing the order will not change the end result (Stuck/Next)*)
-Super_Equalities; auto.
-
-(* 
-(*breakdown mov*)
-
-
-(* Expression should be in the form Next ... = Next...*)
--apply inverse_outcome_equality; split. rewrite -> Pregmap.gso. rewrite -> Heqv in Heqv0. inversion Heqv0. apply Pregmap.gscsc. auto. auto. auto.
-- rewrite -> Pregmap.gso in Heqv0. rewrite -> Heqv0 in Heqv2. discriminate. assumption.
-
-
-(* 
-try (rewrite -> Pregmap.gso in Heqv; rewrite -> Heqv in Heqv0; try discriminate + assumption). Qed.
-
-
-(*breakdown goto*)
-unfold goto_label. destruct matches; rewrite -> Pregmap.gso in Heqv; try rewrite -> Heqv in Heqv0; try discriminate;
-try apply regs_are_different_resources in H1; try apply regs_are_different_resources in H0; try apply regs_are_different_resources in H; auto.
-
-apply inverse_outcome_equality. split. rewrite -> Pregmap.gso. inversion Heqv0. rewrite <- H3. apply Pregmap.gscsc. assumption. auto. reflexivity. 
-
-
-
-contradiction.
-destruct (label_pos lbl 0 (fn_code f)); try reflexivity.  try rewrite -> Pregmap.gso; try destruct (rs_i PC); try reflexivity; try (apply inverse_outcome_equality; rewrite -> Pregmap.gso; try split; try apply Pregmap.gscsc);
-
-
-(*breakdown testcond*)
-unfold eval_testcond.  destruct c;  try rewrite -> Pregmap.gso.
-
-
-(*breakdown exec_add*)
-
-(*breakdown exec_load*)
-
-
-auto.  try apply regs_are_different_resources in H1. apply regs_are_different_resources in H0. auto.
-inversion H0. unfold nextinstr. rewrite H2. reflexivity.
-unfold nextinstr. split. Unset Printing Notations.  rewrite -> Pregmap.gso.  rewrite -> Pregmap.gso. apply Pregmap.gscsc. assumption. auto. auto. reflexivity. Qed.
-
-apply regs_are_different_resources in H, H0, H1.
-(*solves Pmov*)
-unfold exec_instr. apply inverse_outcome_equality. unfold nextinstr. split. Unset Printing Notations.  rewrite -> Pregmap.gso.  rewrite -> Pregmap.gso. apply Pregmap.gscsc. assumption. auto. auto. reflexivity. Qed.  *)
-(* 
- unfold exec_instr. unfold goto_label. unfold exec_load.
-  destruct (rs_i PC). destruct (label_pos lbl 0 (fn_code f)).
- destruct (Mem.loadv Mint32 m (eval_addressing g a rs)).  inversion H2.
- destruct (Mem.loadv Mint32 m_i (eval_addressing g a rs_i)). inversion H1. unfold nextinstr in H6, H8.
- destruct (label_pos lbl 0 (fn_code f)). destruct (rs_i PC); try discriminate. inversion H0. unfold nextinstr. rewrite -> H8. 
- 
- destruct (rs_i @ rd <- v0 PC); try discriminate. contradiction. unfold eval_addressing in H1, H2. *)
 
 Qed.
