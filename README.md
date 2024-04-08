@@ -1,5 +1,29 @@
-# CompCert
+# ARM ISA Reordering
+
+
+## Files
+Memory system representation, proof of semantic equality, and reordering is in aarch64/Asm_MemSim.v. Some utility functions added to lib/Maps.v
+
+ARM specification is in aarch64/Asm.v
+## Quick Start w/ OPAM
+
+opam switch create 4.13.1
+eval 'opam env'
+opam install coq=8.13.2
+opam install menhir
+./config aarch64-macos
+make all
+
+This will take roughly 20 minutes to build all of CompCert + my stuff. 
+Currently, the expected behavior is to fail on line 1865 of MemSim.v, as that proof is currently incomplete.
+
+Once that is completed, then the command will either complete successfully or fail setting up the linker for compcert - either is acceptable as either case means that all Coq code was interpreted correctly.
+
+
+
+# Compcert
 The formally-verified C compiler.
+
 
 ## Overview
 The CompCert C verified compiler is a compiler for a large subset of the
