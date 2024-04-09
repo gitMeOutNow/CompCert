@@ -467,11 +467,11 @@ Definition eval_memsim_instr_internal (f: function)(i: instruction)(ars: allregs
         | Pbs id sg pid =>
             MemSimNext (ars@ (pid , PC)  <- (Genv.symbol_address ge id Ptrofs.zero)) m ifo eaw
         | Pblr r sg pid =>
-            MemSimNext (ars@ (pid , RA)  <- (Val.offset_ptr ars@ (pid , PC)  Ptrofs.one) @ (pid, PC) <- (ars@ (pid , r)) ) m ifo eaw
+        MemSimNext (ars@ (pid , RA)  <- (Val.offset_ptr ars@ (pid , PC)  Ptrofs.one) @ (pid, PC) <- (ars@ (pid , r)) ) m ifo eaw
         | Pbr r sg pid =>
-            MemSimNext (ars@ (pid , PC)  <- (ars@ (pid , r)) ) m ifo eaw
+            MemSimNext (ars@ (pid , PC)  <- (ars@ (pid, r)) ) m ifo eaw
         | Pret r pid =>
-            MemSimNext (ars@ (pid , PC)  <- (ars@ (pid , r)) ) m ifo eaw
+            MemSimNext (ars@ (pid , PC)  <- (ars@ (pid, r)) ) m ifo eaw
         | Pcbnz sz r lbl pid =>
             match eval_testzero sz ars@ (pid, r) m with
             | Some true => MemSimNext ars m ifo eaw
@@ -479,19 +479,19 @@ Definition eval_memsim_instr_internal (f: function)(i: instruction)(ars: allregs
             | None => MemSimStuck
             end
         | Pcbz sz r lbl pid =>
-            match eval_testzero sz ars@ (pid , r ) m with
+            match eval_testzero sz ars@ (pid, r ) m with
             | Some true => goto_label f lbl ars pid m ifo eaw
             | Some false => MemSimNext ars m ifo eaw
             | None => MemSimStuck
             end
         | Ptbnz sz r n lbl pid =>
-            match eval_testbit sz ars@ (pid , r ) n with
+            match eval_testbit sz ars@ (pid, r ) n with
             | Some true => goto_label f lbl ars pid m ifo eaw
             | Some false => MemSimNext ars m ifo eaw
             | None => MemSimStuck
             end
         | Ptbz sz r n lbl pid =>
-            match eval_testbit sz ars@ (pid , r ) n with
+            match eval_testbit sz ars@ (pid, r ) n with
             | Some true => MemSimNext ars m ifo eaw
             | Some false => goto_label f lbl ars pid m ifo eaw
             | None => MemSimStuck
@@ -940,9 +940,9 @@ Definition asm_to_memsim (asm_i: Asm.instruction) (pid: processor_id)(txid: mem_
     match asm_i with 
     | Asm.Pb lbl    => ([Pb lbl pid])                                               (**r branch *)
     | Asm.Pbc c lbl  => ([Pbc c lbl pid; Pincpc pid])                             (**r conditional branch *)
-    | Asm.Pbl id sg  => ([Pbl id sg pid])                              (**r jump to function and link *)
+    | Asm.Pbl id sg  => ([Pbl id sg pid])                             (**r jump to function and link *)
     | Asm.Pbs id sg => ([Pbs id sg pid])                                  (**r jump to function *)
-    | Asm.Pblr r sg => ([Pblr r sg pid])                                 (**r indirect jump and link *)
+    | Asm.Pblr r sg => ([Pblr r sg pid])        
     | Asm.Pbr r sg => ([Pbr r sg pid])                                   (**r indirect jump *)
     | Asm.Pret r => ([Pret r pid])                                        (**r return *)
     | Asm.Pcbnz sz r lbl => ([Pcbnz sz r lbl pid; Pincpc pid])                       (**r branch if not zero *)
@@ -1274,6 +1274,16 @@ Ltac sem_eq_solver :=
     [ |- regs_identical ?ars ?r ?rs ] => unfold regs_identical; intro; sem_eq_solver (*Nonterminal*)
     | _ => idtac
     end.
+
+Remark tuple_fneq: forall (a b: processor_id) (c d: preg), a <> b -> pair a c <> pair b d.
+Proof.
+intros. unfold not. intros. inv H0. contradiction.
+Qed.
+
+Remark tuple_bneq:  forall (a b: processor_id) (c d: preg), c <> d -> pair a c <> pair b d.
+Proof.
+intros. unfold not. intros. inv H0. contradiction.
+Qed.
 
 
 Ltac temp_solver := 
@@ -1770,15 +1780,6 @@ Ltac Super_Equalities :=
   end.
 
   
-Remark tuple_fneq: forall (a b: processor_id) (c d: preg), a <> b -> pair a c <> pair b d.
-Proof.
-intros. unfold not. intros. inv H0. contradiction.
-Qed.
-
-Remark tuple_bneq:  forall (a b: processor_id) (c d: preg), c <> d -> pair a c <> pair b d.
-Proof.
-intros. unfold not. intros. inv H0. contradiction.
-Qed.
 
 
 Remark neq_comm: forall (A:Type) (a b: A), a <> b -> b <> a.
@@ -1798,8 +1799,8 @@ Definition output_data_eq (o1 o2: outcome): Prop :=
     | _, MemSimStuck => False
     | MemSimJumpOut ars1 m1 ifmo1 eaw1, MemSimJumpOut ars2 m2 ifmo2 eaw2 => ars1 = ars2 /\ m1 = m2 /\ ifmo1 = ifmo2 /\ eaw1 = eaw2
     | MemSimNext ars1 m1 ifmo1 eaw1, MemSimNext ars2 m2 ifmo2 eaw2 => ars1 = ars2 /\ m1 = m2 /\ ifmo1 = ifmo2 /\ eaw1 = eaw2
-    | MemSimNext ars1 m1 ifmo1 eaw1, MemSimJumpOut ars2 m2 ifmo2 eaw2 => ars1 = ars2 /\ m1 = m2 /\ eaw1 = eaw2
-    | MemSimJumpOut ars1 m1 ifmo1 eaw1, MemSimNext ars2 m2 ifmo2 eaw2 => ars1 = ars2 /\ m1 = m2 /\ eaw1 = eaw2
+    | MemSimNext ars1 m1 ifmo1 eaw1, MemSimJumpOut ars2 m2 ifmo2 eaw2 => ars1 = ars2 /\ m1 = m2 /\ ifmo1 = ifmo2 /\ eaw1 = eaw2
+    | MemSimJumpOut ars1 m1 ifmo1 eaw1, MemSimNext ars2 m2 ifmo2 eaw2 => ars1 = ars2 /\ m1 = m2 /\ ifmo1 = ifmo2 /\ eaw1 = eaw2
     end.
 
 Remark output_data_eq_refl: forall o, output_data_eq o o.
@@ -1809,27 +1810,33 @@ Qed.
 
 Remark output_data_eq_sym: forall o1 o2, output_data_eq o1 o2 -> output_data_eq o2 o1.
 Proof.
-intros. unfold output_data_eq in *. destruct o1; destruct o2. try destruct H as [H1 [H2 [H3 H4]]]. subst. split; auto. split; auto. destruct H. symmetry. apply H.
-split; auto. destruct H. destruct H0. auto. destruct H. destruct H0. auto. apply H. destruct H. destruct H0. split. auto. split. auto. auto.
-destruct H. destruct H0. destruct H1. split. auto. split. auto. split; auto. apply H. apply H. apply H. apply H.
+intros. unfold output_data_eq in *. destruct o1; destruct o2;  destruct H; try destruct H0; try destruct H1; try apply four_and_shortcut; auto.
 Qed.
+
+
 
 Ltac reorder_solver :=
     match goal with
     | [H_a: ?a |- ?a] => assumption (*Terminal*)
     | [H_not_comm: ?a <> ?b |- ?b <> ?a] => apply neq_comm in H_not_comm; assumption (*Terminal*)
     | [ |- pair ?a ?b <> pair ?c ?d] => apply tuple_bneq; intro H_contra; discriminate (*Terminal*)
+    (*set commutativity*)
+    | [ |- PRmap.set ?k1 ?v1 (PRmap.set ?k2 ?v2 ?mi) = PRmap.set ?k2 ?v2 (PRmap.set ?k1 ?v1 ?mi)] => rewrite PRmap.gscsc; try reflexivity; reorder_solver (*Semiterminal*)
     (* Boring transitivity*)
     | [H_l: ?a = ?b, H_r: ?b = ?c |- _] => rewrite H_l in H_r; try inversion H_r; subst; reorder_solver (* Semiterminal*)
     | [H_l: ?a = ?b, H_r: ?c = ?b |- _] => rewrite H_l in H_r; try inversion H_r; subst; reorder_solver (* Semiterminal*)
     | [H_l: ?b = ?a, H_r: ?b = ?c |- _] => rewrite H_l in H_r; try inversion H_r; subst; reorder_solver (* Semiterminal*)
+    (*Handle weird case of all matches not being deconstructed - look into more*)
+    | [H_match_cond: ?a = ?b |- context[match ?a with _ => _ end]] => rewrite H_match_cond; reorder_solver (* Nonterminal*)
+    (*destruct equivalence conjunctions*)
+    | [ |- ?A /\ ?B /\ ?C /\ ?D] => apply four_and_shortcut; try reflexivity; reorder_solver 
     (* destruct tuples*)
     | [H_dne:  ~(exists r : data_resource,
     data_res_eq r (SingleReg ?pid1 ?r1) /\ data_res_eq r (SingleReg ?pid2 ?r1))
      |- not (eq (pair _ ?r1) (pair _ ?r1))] => apply tuple_fneq; apply different_procs_different_resources in H_dne; reorder_solver (* Nonterminal*)
      (*Break down gso. Need to be very careful with this - it can lead to unbounded recursion. This isn't an issue in the current version of this ltac*)
      | [ H_raw: context[PRmap.set ?k1 ?v ?map ?k2]  |- _] => rewrite PRmap.gso in H_raw; reorder_solver (* Nonterminal *)
-     | _ => idtac
+     | _ => try reflexivity
 end.
   
 Theorem reorder: forall g (f: function)(i1 i2: instruction) (ars_i: allregsets) (m_i: mem) (eaw_i: early_ack_writes) (ifmo_i: in_flight_mem_ops),
@@ -1848,18 +1855,5 @@ try (apply hazard_elimination in H;  contradiction +  unfold not;  intros;  disc
 try (apply hazard_elimination in H0;  contradiction +  unfold not;  intros;  discriminate H2);
 
 
-unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; destruct matches;
-
-(*Filter out impossible cases, apply set commutativity, and finish.
- We can't do this in ltac bc matching is annoying*)
-reorder_solver. apply four_and_shortcut; try reflexivity.  try rewrite PRmap.gscsc; try reflexivity; reorder_solver.
-
-
-(* Manual repeating b4 we automate*)
-try (apply hazard_elimination in H1;  contradiction +  unfold not;  intros;  discriminate H2);
-try (apply hazard_elimination in H;  contradiction +  unfold not;  intros;  discriminate H2);
-try (apply hazard_elimination in H0;  contradiction +  unfold not;  intros;  discriminate H2).
-
--unfold output_data_eq. unfold eval_memsim_instr. unfold eval_memsim_instr_internal. unfold eval_testcond. unfold goto_label. destruct matches; try rewrite Heqv; try reflexivity; reorder_solver. apply four_and_shortcut; try reflexivity. rewrite PRmap.gscsc. reflexivity. reorder_solver.
-
+unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; destruct matches; reorder_solver. 
 Qed.
