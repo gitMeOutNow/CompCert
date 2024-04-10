@@ -1756,6 +1756,13 @@ Remark different_procs_different_resources: forall r pid1 pid2,
 Proof. unfold not. intros. apply H. exists (SingleReg pid1 r). subst. split; apply data_res_isomorphism.
 Qed.
 
+Remark different_something_different_resource: forall r1 r2 pid1 pid2,
+~ (exists dr : data_resource, data_res_eq dr (SingleReg pid1 r1) /\ data_res_eq dr (SingleReg pid2 r2)) -> pair pid1 r1 <> pair pid2 r2.
+Proof.
+intros. unfold not. intro. apply H. exists (SingleReg pid1 r1). split. apply data_res_isomorphism. inversion H0. subst. apply data_res_isomorphism.
+Qed.
+
+
 Remark resources_are_different_resources: forall r1 r2,  ~
  (exists r : data_resource, data_res_eq r r1 /\ data_res_eq r r2) ->  r1 <> r2.
  Proof.
@@ -1764,21 +1771,13 @@ Remark resources_are_different_resources: forall r1 r2,  ~
   try (rewrite <- H0; apply data_res_isomorphism).
 Qed.
 
-Remark VInt_eq: forall i1 i2, Vint i1 = Vint i2 -> i1 = i2.
-Proof. intros. inv H. reflexivity. Qed.
-
-Ltac Super_Equalities :=
-  match goal with
-  | [ H_gso: ?a @ ?b <- (?a ?c) ?d = ?e |- _ ] =>
-    rewrite -> Pregmap.gso in H_gso; Super_Equalities
-  | [ H1: Vint ?a = Vint ?b, H2: Vint ?a = Vint ?c |- _ ] =>
-    rewrite H1 in H2; apply VInt_eq; Super_Equalities
-  | [ H1: ?a = ?b, H2: ?a = ?c |- _ ] =>
-      rewrite H1 in H2; inv H2; Super_Equalities
-  | [ H_destroy: ?a = ?b |- _] => subst a; Super_Equalities
-  | _ => idtac
-  end.
-
+Remark tuple_inv_fneq: forall (a c : processor_id) (b d: preg), (a, b) <> (c, d) -> a = c -> b <> d.
+intros. unfold not in *. intro. subst. auto.
+Qed.
+ 
+Remark tuple_inv_bneq: forall (a c : processor_id) (b d: preg), (a, b) <> (c, d) -> b = d -> a <> c.
+intros. unfold not in *. intro. subst. auto.
+Qed.
   
 
 
@@ -1817,27 +1816,36 @@ Qed.
 
 Ltac reorder_solver :=
     match goal with
+    | [|-?a = ?a] => reflexivity (*Terminal*)
     | [H_a: ?a |- ?a] => assumption (*Terminal*)
     | [H_not_comm: ?a <> ?b |- ?b <> ?a] => apply neq_comm in H_not_comm; assumption (*Terminal*)
-    | [ |- pair ?a ?b <> pair ?c ?d] => apply tuple_bneq; intro H_contra; discriminate (*Terminal*)
     (*set commutativity*)
     | [ |- PRmap.set ?k1 ?v1 (PRmap.set ?k2 ?v2 ?mi) = PRmap.set ?k2 ?v2 (PRmap.set ?k1 ?v1 ?mi)] => rewrite PRmap.gscsc; try reflexivity; reorder_solver (*Semiterminal*)
     (* Boring transitivity*)
     | [H_l: ?a = ?b, H_r: ?b = ?c |- _] => rewrite H_l in H_r; try inversion H_r; subst; reorder_solver (* Semiterminal*)
     | [H_l: ?a = ?b, H_r: ?c = ?b |- _] => rewrite H_l in H_r; try inversion H_r; subst; reorder_solver (* Semiterminal*)
     | [H_l: ?b = ?a, H_r: ?b = ?c |- _] => rewrite H_l in H_r; try inversion H_r; subst; reorder_solver (* Semiterminal*)
+    (*deconstruct tuple goals*)
+    | [H_ne: ?a <> ?b |- pair ?a _ <> pair ?b _] => apply tuple_fneq; assumption (*Terminal*)
+    | [H_ne: ?a <> ?b |- pair _ ?a <> pair _ ?b] => apply tuple_bneq; assumption (*Terminal*)
+    | [H_ne: pair ?a _ <> pair ?b _ |- ?a <> ?b] => apply tuple_inv_fneq in H_ne; assumption (*Terminal*)
+    | [H_ne: pair _ ?a <> pair _ ?b |- ?a <> ?b] => apply tuple_inv_bneq in H_ne; assumption (*Terminal*)   
+    (* More tuple manipulation*)
+    | [H_ne: ?b <> ?a |- pair ?a _ <> pair ?b _] => apply neq_comm in H_ne; reorder_solver
+    | [H_ne: ?b <> ?a |- pair _ ?a <> pair _ ?b] => apply neq_comm in H_ne; reorder_solver
+    | [H_ne: pair ?a _ <> pair ?b _ |- ?a <> ?b] => apply neq_comm; reorder_solver
+    | [H_ne: pair _ ?a <> pair _ ?b |- ?a <> ?b] => apply neq_comm; reorder_solver
+    | [H_ne: pair ?a ?c <> pair ?b ?c |- _] => apply tuple_inv_bneq in H_ne; reorder_solver
+    | [H_ne: pair ?c ?a <> pair ?c ?b |- _] => apply tuple_inv_fneq in H_ne; reorder_solver
     (*Handle weird case of all matches not being deconstructed - look into more*)
     | [H_match_cond: ?a = ?b |- context[match ?a with _ => _ end]] => rewrite H_match_cond; reorder_solver (* Nonterminal*)
     (*destruct equivalence conjunctions*)
     | [ |- ?A /\ ?B /\ ?C /\ ?D] => apply four_and_shortcut; try reflexivity; reorder_solver 
-    (* destruct tuples*)
-    | [H_dne:  ~(exists r : data_resource,
-    data_res_eq r (SingleReg ?pid1 ?r1) /\ data_res_eq r (SingleReg ?pid2 ?r1))
-     |- not (eq (pair _ ?r1) (pair _ ?r1))] => apply tuple_fneq; apply different_procs_different_resources in H_dne; reorder_solver (* Nonterminal*)
-     (*Break down gso. Need to be very careful with this - it can lead to unbounded recursion. This isn't an issue in the current version of this ltac*)
+    | [ |- pair ?a ?b <> pair ?a ?c] => apply tuple_bneq; try (unfold not; intro; discriminate); reorder_solver
+    (*Break down gso. Need to be very careful with this - it can lead to unbounded recursion. This isn't an issue in the current version of this ltac*)
      | [ H_raw: context[PRmap.set ?k1 ?v ?map ?k2]  |- _] => rewrite PRmap.gso in H_raw; reorder_solver (* Nonterminal *)
      | [|- PRmap.set ?A ?v1 (PRmap.set ?B ?v2 (PRmap.set ?C ?v3 ?mi)) = PRmap.set ?C ?v3 (PRmap.set ?A ?v1 (PRmap.set ?B ?v2 ?mi))] => rewrite <- PRmap.gscsc_ext; try reflexivity; reorder_solver (* Nonterminal*)
-     | [|- context[PRmap.set ?k1 ?v ?map ?k2]] => rewrite PRmap.gso; reorder_solver (* Nonterminal *)
+     | [|- context[PRmap.set ?k1 _ ?map ?k2]] => rewrite PRmap.gso; reorder_solver (* Nonterminal *)
      | _ => try reflexivity
 end.
   
@@ -1849,13 +1857,231 @@ Proof. intros.
 unfold data_dependence in H. unfold data_sink, data_source in H. apply not_or_or_and in H; destruct H; destruct H0. destruct i1. destruct i2.
 
 
-
-(* unfold data_dependence in H. unfold data_sink, data_source in H. destruct i1. destruct i2; apply not_or_or_and in H; destruct H; destruct H0; *)
 (* Remove data hazards that hit the same singleton register (eg PC, CR)*)
-try (apply hazard_elimination in H1;  contradiction +  unfold not;  intros;  discriminate H2);
-try (apply hazard_elimination in H;  contradiction +  unfold not;  intros;  discriminate H2);
-try (apply hazard_elimination in H0;  contradiction +  unfold not;  intros;  discriminate H2);
+try (apply hazard_elimination in H1;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H1);
+try (apply hazard_elimination in H;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H);
+try (apply hazard_elimination in H0;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H0);
 
 
-unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; destruct matches; reorder_solver. 
+unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; destruct matches; reorder_solver.
+
+try (apply hazard_elimination in H1;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H1);
+try (apply hazard_elimination in H;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H);
+try (apply hazard_elimination in H0;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H0);
+
+
+unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; destruct matches; reorder_solver.  
+
+try (apply hazard_elimination in H1;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H1);
+try (apply hazard_elimination in H;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H);
+try (apply hazard_elimination in H0;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H0);
+
+
+unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; destruct matches; reorder_solver.
+
+
+try (apply hazard_elimination in H1;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H1);
+try (apply hazard_elimination in H;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H);
+try (apply hazard_elimination in H0;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H0);
+
+
+unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; destruct matches; reorder_solver.
+
+
+try (apply hazard_elimination in H1;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H1);
+try (apply hazard_elimination in H;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H);
+try (apply hazard_elimination in H0;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H0);
+
+
+unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; destruct matches; reorder_solver.
+
+
+try (apply hazard_elimination in H1;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H1);
+try (apply hazard_elimination in H;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H);
+try (apply hazard_elimination in H0;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H0);
+
+
+unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; destruct matches; reorder_solver.
+
+try (apply hazard_elimination in H1;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H1);
+try (apply hazard_elimination in H;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H);
+try (apply hazard_elimination in H0;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H0);
+
+
+unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; destruct matches; reorder_solver.
+
+
+try (apply hazard_elimination in H1;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H1);
+try (apply hazard_elimination in H;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H);
+try (apply hazard_elimination in H0;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H0);
+
+
+unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; destruct matches; reorder_solver.
+
+
+try (apply hazard_elimination in H1;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H1);
+try (apply hazard_elimination in H;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H);
+try (apply hazard_elimination in H0;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H0);
+
+
+unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; destruct matches; reorder_solver.
+
+
+try (apply hazard_elimination in H1;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H1);
+try (apply hazard_elimination in H;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H);
+try (apply hazard_elimination in H0;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H0);
+
+
+unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; destruct matches; reorder_solver.
+
+
+try (apply hazard_elimination in H1;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H1);
+try (apply hazard_elimination in H;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H);
+try (apply hazard_elimination in H0;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H0);
+
+
+unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; destruct matches; reorder_solver.
+
+
+try (apply hazard_elimination in H1;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H1);
+try (apply hazard_elimination in H;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H);
+try (apply hazard_elimination in H0;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H0);
+
+
+unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; destruct matches; reorder_solver.
+
+
+try (apply hazard_elimination in H1;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H1);
+try (apply hazard_elimination in H;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H);
+try (apply hazard_elimination in H0;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H0);
+
+
+unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; destruct matches; reorder_solver.
+
+
+try (apply hazard_elimination in H1;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H1);
+try (apply hazard_elimination in H;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H);
+try (apply hazard_elimination in H0;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H0);
+
+
+unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; destruct matches; reorder_solver.
+
+
+try (apply hazard_elimination in H1;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H1);
+try (apply hazard_elimination in H;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H);
+try (apply hazard_elimination in H0;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H0);
+
+
+unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; destruct matches; reorder_solver.
+
+
+try (apply hazard_elimination in H1;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H1);
+try (apply hazard_elimination in H;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H);
+try (apply hazard_elimination in H0;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H0);
+
+
+unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; destruct matches; reorder_solver.
+
+try (apply hazard_elimination in H1;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H1);
+try (apply hazard_elimination in H;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H);
+try (apply hazard_elimination in H0;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H0);
+
+
+unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; destruct matches; reorder_solver.
+
+
+try (apply hazard_elimination in H1;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H1);
+try (apply hazard_elimination in H;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H);
+try (apply hazard_elimination in H0;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H0);
+
+
+unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; destruct matches; reorder_solver.
+
+
+try (apply hazard_elimination in H1;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H1);
+try (apply hazard_elimination in H;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H);
+try (apply hazard_elimination in H0;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H0);
+
+
+unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; destruct matches; reorder_solver.
+
+
+try (apply hazard_elimination in H1;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H1);
+try (apply hazard_elimination in H;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H);
+try (apply hazard_elimination in H0;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H0);
+
+
+unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; destruct matches; reorder_solver.
+
+
+try (apply hazard_elimination in H1;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H1);
+try (apply hazard_elimination in H;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H);
+try (apply hazard_elimination in H0;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H0);
+
+
+unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; destruct matches; reorder_solver.
+
+
+try (apply hazard_elimination in H1;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H1);
+try (apply hazard_elimination in H;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H);
+try (apply hazard_elimination in H0;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H0);
+
+
+unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; destruct matches; reorder_solver.
+
+
+try (apply hazard_elimination in H1;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H1);
+try (apply hazard_elimination in H;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H);
+try (apply hazard_elimination in H0;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H0);
+
+
+unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; destruct matches; reorder_solver.
+
+
+try (apply hazard_elimination in H1;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H1);
+try (apply hazard_elimination in H;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H);
+try (apply hazard_elimination in H0;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H0);
+
+
+unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; destruct matches; reorder_solver.
+
+
+try (apply hazard_elimination in H1;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H1);
+try (apply hazard_elimination in H;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H);
+try (apply hazard_elimination in H0;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H0);
+
+
+unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; destruct matches; reorder_solver.
+
+
+try (apply hazard_elimination in H1;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H1);
+try (apply hazard_elimination in H;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H);
+try (apply hazard_elimination in H0;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H0);
+
+
+unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; destruct matches; reorder_solver.
+
+
+try (apply hazard_elimination in H1;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H1);
+try (apply hazard_elimination in H;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H);
+try (apply hazard_elimination in H0;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H0);
+
+
+unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; destruct matches; reorder_solver.
+
+
+try (apply hazard_elimination in H1;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H1);
+try (apply hazard_elimination in H;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H);
+try (apply hazard_elimination in H0;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H0);
+
+
+unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; destruct matches; reorder_solver.
+
+
+try (apply hazard_elimination in H1;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H1);
+try (apply hazard_elimination in H;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H);
+try (apply hazard_elimination in H0;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H0);
+
+
+unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; destruct matches; reorder_solver.
 Qed.
