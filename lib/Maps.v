@@ -1486,7 +1486,24 @@ Proof.
   destruct (X.eq z x) as [Hzx|Hzx].
   destruct (X.eq z y) as [Hzy|Hzy]. rewrite -> Hzx in Hzy. contradiction. reflexivity. reflexivity. 
 Qed.
+
+
+Theorem writes_eq:
+  forall (A: Type) (m1 m2: t A) (x: elt)  (v: A),
+    m1 = m2 -> set x v m1 = set x v m2.
+  Proof.
+    intros. subst. reflexivity.
+  Qed.
+
+Theorem gscsc_ext:
+  forall (A: Type) (m: t A) (x y z: elt) (v1 v2 v3: A),
+    x <> y -> y <> z -> x <> z -> set x v1 (set y v2 (set z v3 m)) = set y v2 (set z v3 (set x v1 m)).
+  Proof.
+    intros. rewrite gscsc; auto. apply writes_eq. rewrite gscsc; auto.
+  Qed. 
+
 End EMap.
+
 
 (** * A partial implementation of trees over any type that injects into type [positive] *)
 

@@ -1836,6 +1836,8 @@ Ltac reorder_solver :=
      |- not (eq (pair _ ?r1) (pair _ ?r1))] => apply tuple_fneq; apply different_procs_different_resources in H_dne; reorder_solver (* Nonterminal*)
      (*Break down gso. Need to be very careful with this - it can lead to unbounded recursion. This isn't an issue in the current version of this ltac*)
      | [ H_raw: context[PRmap.set ?k1 ?v ?map ?k2]  |- _] => rewrite PRmap.gso in H_raw; reorder_solver (* Nonterminal *)
+     | [|- PRmap.set ?A ?v1 (PRmap.set ?B ?v2 (PRmap.set ?C ?v3 ?mi)) = PRmap.set ?C ?v3 (PRmap.set ?A ?v1 (PRmap.set ?B ?v2 ?mi))] => rewrite <- PRmap.gscsc_ext; try reflexivity; reorder_solver (* Nonterminal*)
+     | [|- context[PRmap.set ?k1 ?v ?map ?k2]] => rewrite PRmap.gso; reorder_solver (* Nonterminal *)
      | _ => try reflexivity
 end.
   
