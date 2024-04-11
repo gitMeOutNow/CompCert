@@ -1812,6 +1812,12 @@ Proof.
 intros. unfold output_data_eq in *. destruct o1; destruct o2;  destruct H; try destruct H0; try destruct H1; try apply four_and_shortcut; auto.
 Qed.
 
+(* Ltac temp_reorder_solver :=
+    match goal with
+    | [|- pair ?a ?b <> pair ?a ?c] => match is_constructor ?a, is_constructor ?b with
+                                        | true, true => 
+                                        | _, _ => apply tuple_bneq; try (unfold not; intro; discriminate) 
+                                        end *)
 
 
 Ltac reorder_solver :=
@@ -1828,8 +1834,8 @@ Ltac reorder_solver :=
     (*deconstruct tuple goals*)
     | [H_ne: ?a <> ?b |- pair ?a _ <> pair ?b _] => apply tuple_fneq; assumption (*Terminal*)
     | [H_ne: ?a <> ?b |- pair _ ?a <> pair _ ?b] => apply tuple_bneq; assumption (*Terminal*)
-    | [H_ne: pair ?a _ <> pair ?b _ |- ?a <> ?b] => apply tuple_inv_fneq in H_ne; assumption (*Terminal*)
-    | [H_ne: pair _ ?a <> pair _ ?b |- ?a <> ?b] => apply tuple_inv_bneq in H_ne; assumption (*Terminal*)   
+    | [H_ne: pair ?a ?c <> pair ?b ?c |- ?a <> ?b] => apply tuple_inv_fneq in H_ne; assumption (*Terminal*)
+    | [H_ne: pair ?c ?a <> pair ?c ?b |- ?a <> ?b] => apply tuple_inv_bneq in H_ne; assumption (*Terminal*)   
     (* More tuple manipulation*)
     | [H_ne: ?b <> ?a |- pair ?a _ <> pair ?b _] => apply neq_comm in H_ne; reorder_solver
     | [H_ne: ?b <> ?a |- pair _ ?a <> pair _ ?b] => apply neq_comm in H_ne; reorder_solver
@@ -1837,11 +1843,12 @@ Ltac reorder_solver :=
     | [H_ne: pair _ ?a <> pair _ ?b |- ?a <> ?b] => apply neq_comm; reorder_solver
     | [H_ne: pair ?a ?c <> pair ?b ?c |- _] => apply tuple_inv_bneq in H_ne; reorder_solver
     | [H_ne: pair ?c ?a <> pair ?c ?b |- _] => apply tuple_inv_fneq in H_ne; reorder_solver
+    | [ |- pair ?a ?c <> pair ?b ?d] => apply tuple_bneq; try (unfold not; intro; discriminate); reorder_solver
+
     (*Handle weird case of all matches not being deconstructed - look into more*)
     | [H_match_cond: ?a = ?b |- context[match ?a with _ => _ end]] => rewrite H_match_cond; reorder_solver (* Nonterminal*)
     (*destruct equivalence conjunctions*)
     | [ |- ?A /\ ?B /\ ?C /\ ?D] => apply four_and_shortcut; try reflexivity; reorder_solver 
-    | [ |- pair ?a ?b <> pair ?a ?c] => apply tuple_bneq; try (unfold not; intro; discriminate); reorder_solver
     (*Break down gso. Need to be very careful with this - it can lead to unbounded recursion. This isn't an issue in the current version of this ltac*)
      | [ H_raw: context[PRmap.set ?k1 ?v ?map ?k2]  |- _] => rewrite PRmap.gso in H_raw; reorder_solver (* Nonterminal *)
      | [|- PRmap.set ?A ?v1 (PRmap.set ?B ?v2 (PRmap.set ?C ?v3 ?mi)) = PRmap.set ?C ?v3 (PRmap.set ?A ?v1 (PRmap.set ?B ?v2 ?mi))] => rewrite <- PRmap.gscsc_ext; try reflexivity; reorder_solver (* Nonterminal*)
@@ -2084,4 +2091,29 @@ try (apply hazard_elimination in H0;  contradiction +  unfold not;  intros;  dis
 
 
 unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; destruct matches; reorder_solver.
+
+
+try (apply hazard_elimination in H1;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H1);
+try (apply hazard_elimination in H;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H);
+try (apply hazard_elimination in H0;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H0);
+
+
+unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; destruct matches; reorder_solver.
+
+
+
+try (apply hazard_elimination in H1;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H1);
+try (apply hazard_elimination in H;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H);
+try (apply hazard_elimination in H0;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H0);
+
+
+unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; destruct matches; reorder_solver.
+
+try (apply hazard_elimination in H1;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H1);
+try (apply hazard_elimination in H;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H);
+try (apply hazard_elimination in H0;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H0);
+
+
+unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; destruct matches; reorder_solver.
+  rewrite PRmap.gso in Heqv0. reorder_solver. reorder_solver. rewrite PRmap.gso in Heqv0. rewrite PRmap.gso in Heqv0. rewrite PRmap.gso in Heqv0. reorder_solver. reorder_solver. reorder_solver. apply tuple_bneq. intro. discriminate. reorder_solver. apply tuple_bneq. intro. discriminate. apply tuple_bneq. intro. discriminate. reorder_solver.
 Qed.
