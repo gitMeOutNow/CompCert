@@ -1502,6 +1502,13 @@ Theorem gscsc_ext:
     intros. rewrite gscsc; auto. apply writes_eq. rewrite gscsc; auto.
   Qed. 
 
+Theorem gscsc_1of5:
+  forall(A: Type) (m: t A) (q w x y z: elt)(v1 v2 v3 v4 v5:A),
+    z <> y -> z <> x -> z <> w -> z <> q -> set q v1 (set w v2 (set x v3 (set y v4 (set z v5 m)))) = set z v5 (set q v1 (set w v2 (set x v3 (set y v4 m)))).
+    intros. symmetry. rewrite gscsc; auto. apply EMap.writes_eq.
+    rewrite gscsc; auto. apply EMap.writes_eq. rewrite gscsc; auto. apply EMap.writes_eq. rewrite gscsc; auto. 
+    Qed.
+
 End EMap.
 
 

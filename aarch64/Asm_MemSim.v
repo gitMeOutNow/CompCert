@@ -2114,6 +2114,23 @@ try (apply hazard_elimination in H;  contradiction +  unfold not;  intros;  disc
 try (apply hazard_elimination in H0;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H0);
 
 
+unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; destruct matches. 
+Unset Printing Notations.
+try (apply hazard_elimination in H1;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H1);
+try (apply hazard_elimination in H;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H);
+try (apply hazard_elimination in H0;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H0);
+
+
 unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; destruct matches; reorder_solver.
-  rewrite PRmap.gso in Heqv0. reorder_solver. reorder_solver. rewrite PRmap.gso in Heqv0. rewrite PRmap.gso in Heqv0. rewrite PRmap.gso in Heqv0. reorder_solver. reorder_solver. reorder_solver. apply tuple_bneq. intro. discriminate. reorder_solver. apply tuple_bneq. intro. discriminate. apply tuple_bneq. intro. discriminate. reorder_solver.
+
+try (apply hazard_elimination in H1;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H1);
+try (apply hazard_elimination in H;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H);
+try (apply hazard_elimination in H0;  contradiction +  unfold not;  intros;  discriminate H2); try (apply different_procs_different_resources in H1 + apply regs_are_different_resources in H1 + apply different_something_different_resource in H0);
+
+
+unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; destruct matches; reorder_solver.
+
+
+
+
 Qed.
