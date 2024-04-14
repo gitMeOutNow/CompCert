@@ -1495,6 +1495,13 @@ Theorem writes_eq:
     intros. subst. reflexivity.
   Qed.
 
+  Theorem writes_eq_if_vals:
+    forall (A: Type) (m: t A) (x: elt)  (v1 v2: A),
+      v1 = v2 -> set x v1 m = set x v2 m.
+    Proof.
+      intros. subst. reflexivity.
+    Qed.
+
 Theorem gscsc_ext:
   forall (A: Type) (m: t A) (x y z: elt) (v1 v2 v3: A),
     x <> y -> x <> z -> set x v1 (set y v2 (set z v3 m)) = set y v2 (set z v3 (set x v1 m)).
