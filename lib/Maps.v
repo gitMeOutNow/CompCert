@@ -1497,10 +1497,23 @@ Theorem writes_eq:
 
 Theorem gscsc_ext:
   forall (A: Type) (m: t A) (x y z: elt) (v1 v2 v3: A),
-    x <> y -> y <> z -> x <> z -> set x v1 (set y v2 (set z v3 m)) = set y v2 (set z v3 (set x v1 m)).
+    x <> y -> x <> z -> set x v1 (set y v2 (set z v3 m)) = set y v2 (set z v3 (set x v1 m)).
   Proof.
     intros. rewrite gscsc; auto. apply writes_eq. rewrite gscsc; auto.
   Qed. 
+
+Theorem ssw: forall(A: Type) (m: t A) (k1 k2 k3: elt) (v1 v2: A),
+  k1 <> k3 -> (set k2 v2 (set k1 v1 m)) k3 = (set k2 v2 m) k3.
+Proof.
+  intros. unfold set. destruct (X.eq k3 k2). reflexivity. destruct (X.eq k3 k1). unfold not in H. symmetry in e. apply H in e. contradiction. reflexivity.
+Qed.
+
+Theorem gscsc_1of4: forall(A: Type) (m: t A) (w x y z: elt)(v2 v3 v4 v5:A),
+z <> y -> z <> x -> z <> w ->  set w v2 (set x v3 (set y v4 (set z v5 m))) = set z v5  (set w v2 (set x v3 (set y v4 m))).
+intros. symmetry. rewrite gscsc; auto. apply EMap.writes_eq.
+rewrite gscsc; auto. apply EMap.writes_eq. rewrite gscsc; auto.
+Qed.
+  
 
 Theorem gscsc_1of5:
   forall(A: Type) (m: t A) (q w x y z: elt)(v1 v2 v3 v4 v5:A),

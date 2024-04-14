@@ -18,8 +18,10 @@ Require Import Values Memory Events Globalenvs Smallstep.
 Require Import Locations Conventions Asm.
 Require Import Coq.Lists.List.
 Require Import Coq.Classes.EquivDec.
+Require Import Coq.Logic.Classical_Prop.
 Import ListNotations.
 Require Stacklayout.
+
 
 
 Definition processor_id := Z.
@@ -1531,7 +1533,7 @@ Definition data_source(i: instruction) (dr: data_resource): Prop :=
    | Pcvtsw2x rd r1 pid => data_res_eq dr (SingleReg pid r1)                                 (**r sign-extend 32-bit int to 64-bit *)
    | Pcvtuw2x rd r1 pid => data_res_eq dr (SingleReg pid r1)                                  (**r zero-extend 32-bit int to 64-bit *)
    | Pcvtx2w rd pid => data_res_eq dr (SingleReg pid rd)                                                 (**r retype a 64-bit int as a 32-bit int *)
-   | Pbtbl r1 tbl  pid => False                              (**r N-way branch through a jump table *)
+   | Pbtbl r1 tbl  pid => data_res_eq dr (SingleReg pid r1)                              (**r N-way branch through a jump table *)
    | Pbuiltin ef args res pid => False   (**r built-in function (pseudo) *)
    | Pnop pid => False                                                             (**r no operation *)
    | Pcfi_adjust ofs pid => False                                           (**r .cfi_adjust debug directive *)
@@ -1697,7 +1699,7 @@ Definition data_sink(i: instruction) (dr: data_resource) (g: genv) (ars: allregs
     | Pcvtsw2x rd r1 pid => data_res_eq dr (SingleReg pid rd)                                    (**r sign-extend 32-bit int to 64-bit *)
     | Pcvtuw2x rd r1 pid => data_res_eq dr (SingleReg pid rd)                                    (**r zero-extend 32-bit int to 64-bit *)
     | Pcvtx2w rd pid => data_res_eq dr (SingleReg pid rd)                                                 (**r retype a 64-bit int as a 32-bit int *)
-    | Pbtbl r1 tbl  pid => False                            (**r N-way branch through a jump table *)
+    | Pbtbl r1 tbl  pid => data_res_eq dr (SingleReg pid PC) \/ (data_res_eq dr (SingleReg pid X16))                            (**r N-way branch through a jump table *)
     | Pbuiltin ef args res pid => False (**r built-in function (pseudo) *)
     | Pnop pid => False                                                           (**r no operation *)
     | Pcfi_adjust ofs pid => False                                         (**r .cfi_adjust debug directive *)
@@ -1777,9 +1779,26 @@ apply H. exists dr1. destruct H0 as [x [Hp1 Hp2]]. split. apply data_res_isomorp
 unfold data_res_eq. destruct dr1; destruct dr3; unfold data_res_eq in Hp1, Hp2; try contradiction. destruct Hp1. destruct Hp2. subst. split;reflexivity.
 
 unfold data_res_eq. destruct dr1; destruct dr3; unfold data_res_eq in Hp1, Hp2; try contradiction. destruct Hp1. destruct Hp2. subst. split;reflexivity.
-(* unfold not.
-intros. split. intro. apply H. exists dr. destruct H0 as [x [Hp1 Hp2]]. split. assumption. left. apply data_res_isomorphism.
- intro. apply H. exists dr. destruct H0 as [x [Hp1 Hp2]]. split. apply Hp1. left. apply data_res_isomorphism. *)
+Qed.
+
+Remark split_hazards_comm: forall (dr1 dr2 dr3: data_resource),
+(~exists r : data_resource, (data_res_eq r dr2 \/ data_res_eq r dr3) /\ data_res_eq r dr1)  -> ~ (exists r : data_resource, data_res_eq r dr1 /\ data_res_eq r dr2 ) /\ ~(exists r: data_resource, data_res_eq r dr1 /\ data_res_eq r dr3).
+Proof.
+unfold not. intros. split. intro. apply H. exists dr1. destruct H0 as [x [Hp1 Hp2]]. split. left. destruct x.
+
+unfold data_res_eq. destruct dr1; destruct dr2; unfold data_res_eq in Hp1, Hp2; try contradiction. destruct Hp1. destruct Hp2. subst. split;reflexivity.
+
+unfold data_res_eq. destruct dr1; destruct dr2; unfold data_res_eq in Hp1, Hp2; try contradiction. destruct Hp1. destruct Hp2. subst. split;reflexivity.
+
+apply data_res_isomorphism.
+
+intro.
+apply H. exists dr1. destruct H0 as [x [Hp1 Hp2]]. split. right. destruct x. unfold data_res_eq.
+
+unfold data_res_eq. destruct dr1; destruct dr3; unfold data_res_eq in Hp1, Hp2; try contradiction. destruct Hp1. destruct Hp2. subst. split;reflexivity.
+
+unfold data_res_eq. destruct dr1; destruct dr3; unfold data_res_eq in Hp1, Hp2; try contradiction. destruct Hp1. destruct Hp2. subst. split;reflexivity.
+apply data_res_isomorphism.
 Qed.
 
 Remark resources_are_different_resources: forall r1 r2,  ~
@@ -1798,7 +1817,8 @@ Remark tuple_inv_bneq: forall (a c : processor_id) (b d: preg), (a, b) <> (c, d)
 intros. unfold not in *. intro. subst. auto.
 Qed.
   
-
+Remark tuple_rewrite: forall (a: processor_id) (b d: preg), b = d -> (a, b) = (a, d).
+Proof. intros. subst. reflexivity. Qed.
 
 Remark neq_comm: forall (A:Type) (a b: A), a <> b -> b <> a.
 Proof.
@@ -1836,16 +1856,18 @@ Ltac reorder_solver :=
     | [|-?a = ?a] => reflexivity (*Terminal*)
     | [H_a: ?a |- ?a] => assumption (*Terminal*)
     | [H_not_comm: ?a <> ?b |- ?b <> ?a] => apply neq_comm in H_not_comm; assumption (*Terminal*)
-    (*set commutativity*)
-    | [ |- PRmap.set ?k1 ?v1 (PRmap.set ?k2 ?v2 ?mi) = PRmap.set ?k2 ?v2 (PRmap.set ?k1 ?v1 ?mi)] => rewrite PRmap.gscsc; try reflexivity; reorder_solver (*Semiterminal*)
     (* Boring transitivity*)
     | [H_l: ?a = ?b, H_r: ?b = ?c |- _] => rewrite H_l in H_r; try inversion H_r; subst; reorder_solver (* Semiterminal*)
     | [H_l: ?a = ?b, H_r: ?c = ?b |- _] => rewrite H_l in H_r; try inversion H_r; subst; reorder_solver (* Semiterminal*)
     | [H_l: ?b = ?a, H_r: ?b = ?c |- _] => rewrite H_l in H_r; try inversion H_r; subst; reorder_solver (* Semiterminal*)
+    | [H_l: ?b = ?a, H_r: context[(PRmap.set (pair ?k ?b) ?v ?m) (pair ?k ?a)] |- _] => rewrite H_l in H_r; reorder_solver (* Nonterminal*)
+    | [H_l: ?a = ?b, H_r: context[(PRmap.set (pair ?k ?b) ?v ?m) (pair ?k ?a)] |- _] => rewrite H_l in H_r; reorder_solver (* Nonterminal*)
+    | [H_l: ?b = ?a, H_r: context[?m (pair ?pid ?b) ] |- _] => rewrite H_l in H_r; reorder_solver (* Nonterminal*)
     (*break apart exists dr statements*)
     | H_e: ~(exists r : data_resource, data_res_eq r ?d /\ data_res_eq r ?d) |- _ => apply hazard_elimination in H_e; contradiction +  unfold not;  intros;  discriminate H_e (*Terminal*)
     | H_e: ~(exists r : data_resource, data_res_eq r ?d /\ True) |- _ => apply hazard_elimination in H_e; contradiction +  unfold not;  intros;  discriminate H_e (*Terminal*)
     | H_e: ~(exists r : data_resource, _ /\ ((data_res_eq r ?d2) \/ _)) |- _ => apply split_hazards in H_e; destruct H_e; reorder_solver (*Nonterminal*)
+    | H_e: ~(exists r : data_resource, ((data_res_eq r ?d2) \/ _) /\ _) |- _ => apply split_hazards_comm in H_e; destruct H_e; reorder_solver (*Nonterminal*)
 
     | H_e: ~(exists r : data_resource, data_res_eq r ?d1 /\ data_res_eq r ?d2) |- _ => apply different_something_different_resource in H_e; reorder_solver(*Nonterminal*)
 
@@ -1861,7 +1883,7 @@ Ltac reorder_solver :=
     | [H_ne: pair _ ?a <> pair _ ?b |- ?a <> ?b] => apply neq_comm; reorder_solver
     | [H_ne: pair ?a ?c <> pair ?b ?c |- _] => apply tuple_inv_bneq in H_ne; reorder_solver
     | [H_ne: pair ?c ?a <> pair ?c ?b |- _] => apply tuple_inv_fneq in H_ne; reorder_solver
-    | [ |- pair ?a ?c <> pair ?b ?d] => apply tuple_bneq; try (unfold not; intro; discriminate); reorder_solver
+    | [ |- pair ?a ?c <> pair ?b ?d] => apply tuple_bneq; unfold not; intro; try discriminate; reorder_solver
     (* Break apart ireg0/iregsp*)
     | [|- context[ir0w _ ?r _]] => unfold ir0w; destruct r; reorder_solver (*Nonterminal*)
     | [|- context[ir0x _ ?r _]] => unfold ir0x; destruct r; reorder_solver (*Nonterminal*)
@@ -1869,14 +1891,22 @@ Ltac reorder_solver :=
     | [H_match_cond: ?a = ?b |- context[match ?a with _ => _ end]] => rewrite H_match_cond; reorder_solver (* Nonterminal*)
     (*destruct equivalence conjunctions*)
     | [ |- ?A /\ ?B /\ ?C /\ ?D] => apply four_and_shortcut; try reflexivity; reorder_solver 
-    (*Break down gso. Need to be very careful with this - it can lead to unbounded recursion. This isn't an issue in the current version of this ltac*)
-     | [ H_raw: context[PRmap.set ?k1 ?v ?map ?k2]  |- _] => rewrite PRmap.gso in H_raw; reorder_solver (* Nonterminal *)
+    (*set commutativity*)
+    | [ |- PRmap.set ?k1 ?v1 (PRmap.set ?k2 ?v2 ?mi) = PRmap.set ?k2 ?v2 (PRmap.set ?k1 ?v1 ?mi)] => rewrite PRmap.gscsc; try reflexivity; reorder_solver (*Semiterminal*)
+    (*good for instructions that set multiple regs*)
+    | [ H_ssw: context[PRmap.set (pair ?pid1 _) _ (PRmap.set (pair ?pid2 _) _ ?m) (pair ?pid1 _)] |- _ ] => rewrite PRmap.ssw in H_ssw; reorder_solver
+
+    (* Break down gss*)
+    | [ H_raw: context [PRmap.set ?k ?v ?m ?k] |- _] => rewrite PRmap.gss in H_raw; try discriminate; reorder_solver
+    (*Break down gso. Need to be very careful with this - it can lead to unbounded recursion*)
+    | [ H_raw: context[PRmap.set ?k1 ?v ?map ?k2]  |- _] => rewrite PRmap.gso in H_raw; reorder_solver (* Nonterminal *)
      | [|- PRmap.set ?q ?v1 (PRmap.set ?w ?v2 (PRmap.set ?x ?v3 (PRmap.set ?y ?v4 (PRmap.set ?z ?v5 ?m)))) = PRmap.set ?z ?v5 (PRmap.set ?q ?v1 (PRmap.set ?w ?v2 (PRmap.set ?x ?v3 (PRmap.set ?y ?v4 ?m))))] => rewrite -> PRmap.gscsc_1of5; reorder_solver
+     | [|- PRmap.set ?w ?v2 (PRmap.set ?x ?v3 (PRmap.set ?y ?v4 (PRmap.set ?z ?v5 ?m))) = PRmap.set ?z ?v5 (PRmap.set ?w ?v2 (PRmap.set ?x ?v3 (PRmap.set ?y ?v4 ?m)))] => rewrite -> PRmap.gscsc_1of4; reorder_solver
      | [|- PRmap.set ?A ?v1 (PRmap.set ?B ?v2 (PRmap.set ?C ?v3 ?mi)) = PRmap.set ?C ?v3 (PRmap.set ?A ?v1 (PRmap.set ?B ?v2 ?mi))] => rewrite <- PRmap.gscsc_ext; try reflexivity; reorder_solver (* Nonterminal*)
      | [|- context[PRmap.set ?k1 _ ?map ?k2]] => rewrite PRmap.gso; reorder_solver (* Nonterminal *)
      | _ => try reflexivity
 end.
-  
+
 Theorem reorder: forall g (f: function)(i1 i2: instruction) (ars_i: allregsets) (m_i: mem) (eaw_i: early_ack_writes) (ifmo_i: in_flight_mem_ops),
      ~data_dependence i1 i2 g ars_i -> 
      output_data_eq (eval_memsim_instr g f i2  (eval_memsim_instr g f i1 (MemSimNext ars_i m_i ifmo_i eaw_i))) (eval_memsim_instr g f i1  (eval_memsim_instr g f i2  (MemSimNext ars_i m_i ifmo_i eaw_i))).
@@ -1954,7 +1984,7 @@ unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_intern
 unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; destruct matches; reorder_solver.
 unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; destruct matches; reorder_solver.
 unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; destruct matches; reorder_solver.
-
+(* Super slow but finishes*)
 unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; destruct matches; reorder_solver.
 unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; destruct matches; reorder_solver.
 unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; destruct matches; reorder_solver.
@@ -1997,23 +2027,13 @@ unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_intern
 unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; destruct matches; reorder_solver.
 unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; destruct matches; reorder_solver.
 unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; destruct matches; reorder_solver.
-
-
-
-
- 
-
-
-
-
-
-
-
-
-
-
-
-
-
+unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; destruct matches; reorder_solver.
+auto. rewrite Heqv0 in Heqo2. reorder_solver.  rewrite <- Heqv0 in Heqo1. reorder_solver. 
+unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; destruct matches; reorder_solver.
+unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; destruct matches; reorder_solver.
+unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; destruct matches; reorder_solver.
+unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; destruct matches; reorder_solver.
+unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; destruct matches; reorder_solver.
+unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; destruct matches; reorder_solver.
 
 Qed. 
