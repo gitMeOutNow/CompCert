@@ -1715,7 +1715,24 @@ Definition data_sink(i: instruction) (dr: data_resource) (g: genv) (ars: allregs
     | WriteAck txid pid => False
 end.
 
+Definition disabled_instr(i: instruction): Prop :=
+    match i with
+    | Pbc _ _ _ => True
+    | Pcmpimm _ _ _ _ => True
+    | Pcmnimm _ _ _ _ => True
+    | Ptstimm _ _ _ _ => True
+    | Pcmp _ _ _ _ _ => True
+    | Pcmn _ _ _ _ _ => True
+    | Pcmpext _ _ _ _ => True
+    | Pcmnext _ _ _ _ => True
+    | Ptst _ _ _ _ _ => True
+    | Pfcmp _ _ _ _ => True
+    | Pfcmp0 _ _ _ => True
+    | _ => False
+    end.
 
+Definition disabled_instrs(i1 i2: instruction): Prop :=
+    disabled_instr i1 \/ disabled_instr i2.
 
 Definition data_dependence(i1 i2: instruction) g rs: Prop :=
     (exists r, data_sink i1 r g rs /\ data_source i2 r) \/ (exists r, data_sink i2 r g rs /\ data_source i1 r) \/ (exists r, data_sink i2 r g rs /\ data_sink i1 r g rs).
@@ -1865,6 +1882,15 @@ Definition output_data_eq (o1 o2: outcome): Prop :=
     | MemSimJumpOut ars1 m1 ifmo1 eaw1, MemSimNext ars2 m2 ifmo2 eaw2 => ars1 = ars2 /\ m1 = m2 /\ ifmo1 = ifmo2 /\ eaw1 = eaw2
     end.
 
+Remark reduce_ors_1: ~(True \/ True) -> False.
+Proof. intuition. Qed.
+
+Remark reduce_ors_2: ~(True \/ False) -> False.
+Proof. intuition. Qed.
+
+Remark reduce_ors_3: ~(False \/ True) -> False.
+Proof. intuition. Qed.
+
 Remark output_data_eq_refl: forall o, output_data_eq o o.
 Proof.
 intros. unfold output_data_eq. destruct o; auto.
@@ -1927,14 +1953,24 @@ Ltac reorder_solver :=
     | _ => try reflexivity
 end.
 
+Ltac disable_cmps :=
+    match goal with
+    | [H_test: ~disabled_instrs ?i1 ?i2 |- _] => unfold disabled_instrs in H_test; unfold disabled_instr in H_test; try apply reduce_ors_1 in H_test; try apply reduce_ors_2 in H_test; try apply reduce_ors_3 in H_test; try contradiction
+    end.
+
 Theorem reorder: forall g (f: function)(i1 i2: instruction) (ars_i: allregsets) (m_i: mem) (eaw_i: early_ack_writes) (ifmo_i: in_flight_mem_ops),
-     ~data_dependence i1 i2 g ars_i -> 
-     output_data_eq (eval_memsim_instr g f i2  (eval_memsim_instr g f i1 (MemSimNext ars_i m_i ifmo_i eaw_i))) (eval_memsim_instr g f i1  (eval_memsim_instr g f i2  (MemSimNext ars_i m_i ifmo_i eaw_i))).
+     ~data_dependence i1 i2 g ars_i -> ~disabled_instrs i1 i2 ->
+     output_data_eq ( eval_memsim_instr g f i2  (eval_memsim_instr g f i1 (MemSimNext ars_i m_i ifmo_i eaw_i))) (eval_memsim_instr g f i1  (eval_memsim_instr g f i2  (MemSimNext ars_i m_i ifmo_i eaw_i))).
 Proof. intros. 
 (* Definition unwrapping*)
-unfold data_dependence in H. unfold data_sink, data_source, data_address_sink, data_address_src in H. apply not_or_or_and in H; destruct H; destruct H0. destruct i1. destruct i2;
-unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; destruct matches; reorder_solver.
-destruct i2;
+unfold data_dependence in H. unfold data_sink, data_source, data_address_sink, data_address_src in H. apply not_or_or_and in H. destruct H.  destruct H1. destruct i1. 
+(* destruct i2; disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; destruct matches; reorder_solver.  *)
+
+destruct i2; disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; destruct matches; reorder_solver. 
+destruct i2; disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; destruct matches; reorder_solver. 
+destruct i2; disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; destruct matches; reorder_solver. 
+
+destruct i2; disable_cmps;
 unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; destruct matches; reorder_solver.
 destruct i2;
 unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; destruct matches; reorder_solver.
