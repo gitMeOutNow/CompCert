@@ -11,11 +11,11 @@ opam switch create 4.13.1
 eval 'opam env'
 opam install coq=8.13.2
 opam install menhir
-./config aarch64-macos
+./configure aarch64-macos
 make all
 
 This will take roughly 20 minutes to build all of CompCert + my stuff. 
-Currently, the expected behavior is to fail on line 1865 of MemSim.v, as that proof is currently incomplete.
+Currently, the expected behavior is to fail on line 1942 of MemSim.v, as that proof is currently incomplete.
 
 Once that is completed, then the command will either complete successfully or fail setting up the linker for compcert - either is acceptable as either case means that all Coq code was interpreted correctly.
 
