@@ -90,7 +90,7 @@ End EWEq.
 Module EWmap := EMap(EWEq).
 
 (* (Unenforced) convention: for writes, the first val is the ptr to the memory address, the second val is the value that is to be written*)
-(*second val is arbitrary for reads - we set it to 0*)
+(*second val is initially arbitrary for reads, but later is serialized*)
 Definition in_flight_mem_ops := Trmap.t (option (val* val) % type).
 
 (* map of (process id, val (unenforced convention: Vptr)) to value. Used to determine if that processor has a more recent early acked write than is serialized in mem*)
@@ -113,24 +113,24 @@ Inductive instruction: Type :=
   | Ptbnz (sz: isize) (r: ireg) (n: int) (lbl: label) (pid: processor_id)          (**r branch if bit n is not zero *)
   | Ptbz (sz: isize) (r: ireg) (n: int) (lbl: label) (pid: processor_id)           (**r branch if bit n is zero *)
   (** Memory loads and stores *)
-  | Pldrw (rd: ireg) (a: addressing) (pid: processor_id) (tx_id: mem_transaction_id)                           (**r load int32 *)
-  | Pldrw_a (rd: ireg) (a: addressing) (pid: processor_id) (tx_id: mem_transaction_id)                         (**r load int32 as any32 *)
-  | Pldrx (rd: ireg) (a: addressing) (pid: processor_id) (tx_id: mem_transaction_id)                           (**r load int64 *)
-  | Pldrx_a (rd: ireg) (a: addressing) (pid: processor_id)  (tx_id: mem_transaction_id)                       (**r load int64 as any64 *)
-  | Pldrb (sz: isize) (rd: ireg) (a: addressing) (pid: processor_id) (tx_id: mem_transaction_id)              (**r load int8, zero-extend *)
-  | Pldrsb (sz: isize) (rd: ireg) (a: addressing) (pid: processor_id)  (tx_id: mem_transaction_id)            (**r load int8, sign-extend *)
-  | Pldrh (sz: isize) (rd: ireg) (a: addressing) (pid: processor_id)   (tx_id: mem_transaction_id)            (**r load int16, zero-extend *)
-  | Pldrsh (sz: isize) (rd: ireg) (a: addressing) (pid: processor_id) (tx_id: mem_transaction_id)             (**r load int16, sign-extend *)
-  | Pldrzw (rd: ireg) (a: addressing) (pid: processor_id) (tx_id: mem_transaction_id)                         (**r load int32, zero-extend to int64 *)
-  | Pldrsw (rd: ireg) (a: addressing) (pid: processor_id) (tx_id: mem_transaction_id)                         (**r load int32, sign-extend to int64 *)
-  | Pldp (rd1 rd2: ireg) (a: addressing) (pid: processor_id) (tx_id: mem_transaction_id)                        (**r load two int64 *)
-  | Pstrw (a: addressing) (pid: processor_id) (tx_id: mem_transaction_id)                          (**r store int32 *)
-  | Pstrw_a (a: addressing) (pid: processor_id) (tx_id: mem_transaction_id)                        (**r store int32 as any32 *)
-  | Pstrx (a: addressing) (pid: processor_id) (tx_id: mem_transaction_id)                           (**r store int64 *)
-  | Pstrx_a (a: addressing) (pid: processor_id) (tx_id: mem_transaction_id)                         (**r store int64 as any64 *)
-  | Pstrb (a: addressing) (pid: processor_id) (tx_id: mem_transaction_id)                           (**r store int8 *)
-  | Pstrh (a: addressing) (pid: processor_id) (tx_id: mem_transaction_id)                          (**r store int16 *)
-  | Pstp (a: addressing) (pid: processor_id) (tx_id: mem_transaction_id)                       (**r store two int64 *)
+  | Pldrw (pid: processor_id) (txid: mem_transaction_id)                           (**r load int32 *)
+  | Pldrw_a (pid: processor_id) (txid: mem_transaction_id)                         (**r load int32 as any32 *)
+  | Pldrx (pid: processor_id) (txid: mem_transaction_id)                           (**r load int64 *)
+  | Pldrx_a (pid: processor_id)  (txid: mem_transaction_id)                       (**r load int64 as any64 *)
+  | Pldrb (sz: isize) (pid: processor_id) (txid: mem_transaction_id)              (**r load int8, zero-extend *)
+  | Pldrsb (sz: isize) (pid: processor_id)  (txid: mem_transaction_id)            (**r load int8, sign-extend *)
+  | Pldrh (sz: isize) (pid: processor_id)   (txid: mem_transaction_id)            (**r load int16, zero-extend *)
+  | Pldrsh (sz: isize) (pid: processor_id) (txid: mem_transaction_id)             (**r load int16, sign-extend *)
+  | Pldrzw (pid: processor_id) (txid: mem_transaction_id)                         (**r load int32, zero-extend to int64 *)
+  | Pldrsw (pid: processor_id) (txid: mem_transaction_id)                         (**r load int32, sign-extend to int64 *)
+  | Pldp (rd1 rd2: ireg) (pid: processor_id) (txid: mem_transaction_id)                        (**r load two int64 *)
+  | Pstrw (a: addressing) (pid: processor_id) (txid: mem_transaction_id)                          (**r store int32 *)
+  | Pstrw_a (a: addressing) (pid: processor_id) (txid: mem_transaction_id)                        (**r store int32 as any32 *)
+  | Pstrx (a: addressing) (pid: processor_id) (txid: mem_transaction_id)                           (**r store int64 *)
+  | Pstrx_a (a: addressing) (pid: processor_id) (txid: mem_transaction_id)                         (**r store int64 as any64 *)
+  | Pstrb (a: addressing) (pid: processor_id) (txid: mem_transaction_id)                           (**r store int8 *)
+  | Pstrh (a: addressing) (pid: processor_id) (txid: mem_transaction_id)                          (**r store int16 *)
+  | Pstp (a: addressing) (pid: processor_id) (txid: mem_transaction_id)                       (**r store two int64 *)
   (** Integer arithmetic, immediate *)
   | Paddimm (sz: isize) (rd: iregsp) (r1: iregsp) (n: Z) (pid: processor_id)       (**r addition *)
   | Psubimm (sz: isize) (rd: iregsp) (r1: iregsp) (n: Z) (pid: processor_id)       (**r subtraction *)
@@ -198,12 +198,12 @@ Inductive instruction: Type :=
   | Psdiv (sz: isize) (rd: ireg) (r1 r2: ireg) (pid: processor_id)                 (**r signed division *)
   | Pudiv (sz: isize) (rd: ireg) (r1 r2: ireg) (pid: processor_id)                 (**r unsigned division *)
   (** Floating-point loads and stores *)
-  | Pldrs (rd: freg) (a: addressing) (pid: processor_id) (tx_id: mem_transaction_id)                           (**r load float32 (single precision) *)
-  | Pldrd (rd: freg) (a: addressing) (pid: processor_id)  (tx_id: mem_transaction_id)                         (**r load float64 (double precision) *)
-  | Pldrd_a (rd: freg) (a: addressing) (pid: processor_id)  (tx_id: mem_transaction_id)                        (**r load float64 as any64 *)
-  | Pstrs (a: addressing) (pid: processor_id)  (tx_id: mem_transaction_id)                         (**r store float32 *)
-  | Pstrd  (a: addressing) (pid: processor_id) (tx_id: mem_transaction_id)                          (**r store float64 *)
-  | Pstrd_a (a: addressing) (pid: processor_id) (tx_id: mem_transaction_id)                         (**r store float64 as any64 *)
+  | Pldrs  (pid: processor_id) (txid: mem_transaction_id)                           (**r load float32 (single precision) *)
+  | Pldrd  (pid: processor_id)  (txid: mem_transaction_id)                         (**r load float64 (double precision) *)
+  | Pldrd_a  (pid: processor_id)  (txid: mem_transaction_id)                        (**r load float64 as any64 *)
+  | Pstrs (a: addressing) (pid: processor_id)  (txid: mem_transaction_id)                         (**r store float32 *)
+  | Pstrd  (a: addressing) (pid: processor_id) (txid: mem_transaction_id)                          (**r store float64 *)
+  | Pstrd_a (a: addressing) (pid: processor_id) (txid: mem_transaction_id)                         (**r store float64 as any64 *)
   (** Floating-point move *)
   | Pfmov (rd r1: freg) (pid: processor_id) 
   | Pfmovimms (rd: freg) (f: float32) (pid: processor_id)                          (**r load float32 constant *)
@@ -256,7 +256,7 @@ Inductive instruction: Type :=
   | WriteRequest (txid: mem_transaction_id) (pid: processor_id) (a: addressing) (r: preg) (** Serialize a transaction in memory*)
   | WriteAck (txid: mem_transaction_id) (pid: processor_id) (* Acknowledges memory serialization*)
   | ReadRequest (txid: mem_transaction_id) (pid: processor_id) (a: addressing) (* Requests value from memory*)
-  .
+  | ReadAck (r:preg)(txid: mem_transaction_id) (pid: processor_id).
 
 
 (* Bidirectionality hint -> helps convert processor_id, preg -> PRMap.t*)
@@ -371,24 +371,31 @@ Definition eval_addressing (a: addressing) (ars: allregsets) (pid: processor_id)
 Definition read_request (a: addressing) (txid: mem_transaction_id)(ars: allregsets)(pid:processor_id)(ifmo: in_flight_mem_ops): in_flight_mem_ops :=
     Trmap.set txid (Some (eval_addressing a ars pid, Vundef)) ifmo.
 
-(*represents getting data back from memory*)
-Definition read_ack (chunk: memory_chunk) (transf: val -> val) (tx_id: mem_transaction_id)
-  (r: preg) (ars: allregsets) (pid: processor_id) (m: mem) (ifmo: in_flight_mem_ops) (eaw: early_ack_writes): outcome  :=
+(*represents the moment the fetched value is determined*)
+Definition serialize_read (chunk: memory_chunk) (transf: val -> val) (txid: mem_transaction_id)
+  (ars: allregsets) (pid: processor_id) (m: mem) (ifmo: in_flight_mem_ops) (eaw: early_ack_writes): outcome  :=
     (*Check if anything is in early write*)
-    match ifmo tx_id with 
+    match ifmo txid with 
         | Some (address, _) => match eaw (pid, address) with 
-            | Some v =>  MemSimNext (ars@(pid, r) <- (transf v)) m (Trmap.set tx_id None ifmo) eaw
+            | Some v =>  MemSimNext ars m (Trmap.set txid (Some (address, (transf v))) ifmo) eaw
             (*If not, read from main memory*)
             | None => match Mem.loadv chunk m address with
                 | None => MemSimStuck
-                | Some v => MemSimNext (ars@(pid, r) <- (transf v)) m ifmo eaw
+                | Some v => MemSimNext ars m (Trmap.set txid (Some (address, (transf v))) ifmo) eaw
                 end
         end
         | None => MemSimStuck
     end.
 
-Definition early_ack_write (tx_id: mem_transaction_id) (pid:processor_id) (eaw: early_ack_writes)(ifmo: in_flight_mem_ops) : early_ack_writes :=
-    match ifmo tx_id with
+(*Writes fetched value into register*)
+Definition read_ack (txid: mem_transaction_id) (ars:allregsets)(m:mem) (pid:processor_id) (eaw: early_ack_writes) (r: preg) (ifmo: in_flight_mem_ops) : outcome :=
+    match ifmo txid with
+    | Some (address, v) => MemSimNext (ars@(pid, r) <- v) m (Trmap.set txid None ifmo) eaw
+    | None => MemSimStuck
+    end.
+
+Definition early_ack_write (txid: mem_transaction_id) (pid:processor_id) (eaw: early_ack_writes)(ifmo: in_flight_mem_ops) : early_ack_writes :=
+    match ifmo txid with
     | Some (address, value) => EWmap.set (pid, address) (Some value) eaw
     | None => eaw (* Should not happen*)
     end.    
@@ -411,8 +418,8 @@ Definition serialize_write (chunk: memory_chunk)
     | None => MemSimStuck
 end.
 
-Definition write_ack (tx_id: mem_transaction_id) (pid:processor_id) (ifmo: in_flight_mem_ops) : in_flight_mem_ops :=
-    Trmap.set tx_id None ifmo.
+Definition write_ack (txid: mem_transaction_id) (pid:processor_id) (ifmo: in_flight_mem_ops) : in_flight_mem_ops :=
+    Trmap.set txid None ifmo.
 
 Definition compare_int (ars: allregsets) (v1 v2: val) (m: mem) (pid: processor_id) :=
   ars@(pid, CN) <- (Val.negative (Val.sub v1 v2))
@@ -499,34 +506,34 @@ Definition eval_memsim_instr_internal (f: function)(i: instruction)(ars: allregs
             | None => MemSimStuck
             end
         (** Memory loads and stores *)
-        | Pldrw rd a pid txid =>
-            read_ack Mint32 (fun v => v) txid rd ars pid m ifo eaw
-        | Pldrw_a rd a pid txid =>
-            read_ack Many32 (fun v => v) txid rd ars pid m ifo eaw
-        | Pldrx rd a pid txid =>
-            read_ack Mint64 (fun v => v) txid rd ars pid m ifo eaw
-        | Pldrx_a rd a pid txid =>
-            read_ack Many64 (fun v => v) txid rd ars pid m ifo eaw
-        | Pldrb W rd a pid txid =>
-            read_ack Mint8unsigned (fun v => v) txid rd ars pid m ifo eaw
-        | Pldrb X rd a pid txid =>
-            read_ack Mint8unsigned Val.longofintu txid rd ars pid m ifo eaw
-        | Pldrsb W rd a pid txid =>
-            read_ack Mint8signed (fun v => v) txid rd ars pid m ifo eaw
-        | Pldrsb X rd a pid txid =>
-            read_ack Mint8signed Val.longofint txid rd ars pid m ifo eaw
-        | Pldrh W rd a pid txid =>
-            read_ack Mint16unsigned (fun v => v) txid rd ars pid m ifo eaw
-        | Pldrh X rd a pid txid =>
-            read_ack Mint16unsigned (Val.longofintu) txid rd ars pid m ifo eaw
-        | Pldrsh W rd a pid txid =>
-            read_ack Mint16signed (fun v => v) txid rd ars pid m ifo eaw
-        | Pldrsh X rd a pid txid =>
-            read_ack Mint16signed (Val.longofint) txid rd ars pid m ifo eaw
-        | Pldrzw rd a pid txid =>
-            read_ack Mint32 (Val.longofintu) txid rd ars pid m ifo eaw
-        | Pldrsw rd a pid txid =>
-            read_ack Mint32 (Val.longofint) txid rd ars pid m ifo eaw
+        | Pldrw pid txid =>
+            serialize_read Mint32 (fun v => v) txid ars pid m ifo eaw
+        | Pldrw_a pid txid =>
+            serialize_read Many32 (fun v => v) txid ars pid m ifo eaw
+        | Pldrx pid txid =>
+            serialize_read Mint64 (fun v => v) txid ars pid m ifo eaw
+        | Pldrx_a pid txid =>
+            serialize_read Many64 (fun v => v) txid ars pid m ifo eaw
+        | Pldrb W pid txid =>
+            serialize_read Mint8unsigned (fun v => v) txid ars pid m ifo eaw
+        | Pldrb X pid txid =>
+            serialize_read Mint8unsigned Val.longofintu txid ars pid m ifo eaw
+        | Pldrsb W pid txid =>
+            serialize_read Mint8signed (fun v => v) txid ars pid m ifo eaw
+        | Pldrsb X pid txid =>
+            serialize_read Mint8signed Val.longofint txid ars pid m ifo eaw
+        | Pldrh W pid txid =>
+            serialize_read Mint16unsigned (fun v => v) txid ars pid m ifo eaw
+        | Pldrh X pid txid =>
+            serialize_read Mint16unsigned (Val.longofintu) txid ars pid m ifo eaw
+        | Pldrsh W pid txid =>
+            serialize_read Mint16signed (fun v => v) txid ars pid m ifo eaw
+        | Pldrsh X pid txid =>
+            serialize_read Mint16signed (Val.longofint) txid ars pid m ifo eaw
+        | Pldrzw pid txid =>
+            serialize_read Mint32 (Val.longofintu) txid ars pid m ifo eaw
+        | Pldrsw pid txid =>
+            serialize_read Mint32 (Val.longofint) txid ars pid m ifo eaw
         | Pstrw a pid txid =>
             serialize_write Mint32 txid ars pid m ifo eaw
         | Pstrw_a a pid txid =>
@@ -722,12 +729,12 @@ Definition eval_memsim_instr_internal (f: function)(i: instruction)(ars: allregs
         | Pudiv X rd r1 r2 pid =>
             MemSimNext ((ars@ (pid, rd)  <- (Val.maketotal (Val.divlu ars@ (pid, r1)  ars@ (pid, r2) )))) m ifo eaw
         (** Floating-point loads and stores *)
-        | Pldrs rd a pid txid =>
-            read_ack Mfloat32 (fun v => v) txid rd ars pid m ifo eaw
-        | Pldrd rd a pid txid =>
-            read_ack Mfloat64 (fun v => v) txid rd ars pid m ifo eaw
-        | Pldrd_a rd a pid txid =>
-            read_ack Many64 (fun v => v) txid rd ars pid m ifo eaw
+        | Pldrs pid txid =>
+            serialize_read Mfloat32 (fun v => v) txid ars pid m ifo eaw
+        | Pldrd pid txid =>
+            serialize_read Mfloat64 (fun v => v) txid ars pid m ifo eaw
+        | Pldrd_a pid txid =>
+            serialize_read Many64 (fun v => v) txid ars pid m ifo eaw
         | Pstrs a pid txid =>
             serialize_write Mfloat32 txid ars pid m ifo eaw
         | Pstrd a pid txid =>
@@ -874,7 +881,7 @@ Definition eval_memsim_instr_internal (f: function)(i: instruction)(ars: allregs
         | Pbuiltin ef args res pid => MemSimStuck    (**r treated specially below *)
         (** The following instructions and directives are not generated directly
             by Asmgen, so we do not model them. *)
-        | Pldp _ _ _ _ _ => MemSimStuck
+        | Pldp _ _ _ _ => MemSimStuck
         | Pstp _ _  _ => MemSimStuck
         | Pcls _ _ _ _ => MemSimStuck
         | Pclz _ _ _ _ => MemSimStuck
@@ -901,6 +908,8 @@ Definition eval_memsim_instr_internal (f: function)(i: instruction)(ars: allregs
             MemSimNext ars m (write_ack txid pid ifo) eaw
         | ReadRequest txid pid a =>
             MemSimNext ars m (read_request a txid ars pid ifo) eaw
+        | ReadAck r txid pid =>
+            read_ack txid ars m pid eaw r ifo
     end.
 
 Definition eval_memsim_instr (f: function) (i: instruction) (o: outcome): outcome :=
@@ -951,17 +960,17 @@ Definition asm_to_memsim (asm_i: Asm.instruction) (pid: processor_id)(txid: mem_
     | Asm.Pcbz sz r lbl => ([Pcbz sz r lbl pid; Pincpc pid])                         (**r branch if zero *)
     | Asm.Ptbnz sz r n lbl => ([Ptbnz sz r n lbl pid; Pincpc pid])                   (**r branch if bit n is not zero *)
     | Asm.Ptbz sz r n lbl => ([Ptbz sz r n lbl pid; Pincpc pid])                     (**r branch if bit n is zero *)
-    | Asm.Pldrw rd a => ([ReadRequest txid pid a; Pldrw rd a pid txid; Pincpc pid])                               (**r load int32 *)
-    | Asm.Pldrw_a rd a => ([ReadRequest txid pid a; Pldrw_a rd a pid txid; Pincpc pid])                           (**r load int32 as any32 *)
-    | Asm.Pldrx rd a => ([ReadRequest txid pid a; Pldrx rd a pid txid; Pincpc pid])                               (**r load int64 *)
-    | Asm.Pldrx_a rd a => ([ReadRequest txid pid a; Pldrx_a rd a pid txid; Pincpc pid])                           (**r load int64 as any64 *)
-    | Asm.Pldrb sz rd a => ([ReadRequest txid pid a; Pldrb sz rd a pid txid; Pincpc pid])                         (**r load int8, zero-extend *)
-    | Asm.Pldrsb sz rd a => ([ReadRequest txid pid a; Pldrsb sz rd a pid txid; Pincpc pid])                       (**r load int8, sign-extend *)
-    | Asm.Pldrh sz rd a => ([ReadRequest txid pid a; Pldrh sz rd a pid txid; Pincpc pid])                         (**r load int16, zero-extend *)
-    | Asm.Pldrsh sz rd a => ([ReadRequest txid pid a; Pldrsh sz rd a pid txid; Pincpc pid])                       (**r load int16, sign-extend *)
-    | Asm.Pldrzw rd a => ([ReadRequest txid pid a; Pldrzw rd a pid txid; Pincpc pid])                             (**r load int32, zero-extend to int64 *)
-    | Asm.Pldrsw rd a => ([ReadRequest txid pid a; Pldrsw rd a pid txid; Pincpc pid])                             (**r load int32, sign-extend to int64 *)
-    | Asm.Pldp rd1 rd2 a => ([ReadRequest txid pid a; Pldp rd1 rd2 a pid txid; Pincpc pid])                       (**r load two int64 *)
+    | Asm.Pldrw rd a => ([ReadRequest txid pid a; Pldrw pid txid; ReadAck rd txid pid; Pincpc pid])                               (**r load int32 *)
+    | Asm.Pldrw_a rd a => ([ReadRequest txid pid a; Pldrw_a pid txid; ReadAck rd txid pid; Pincpc pid])                           (**r load int32 as any32 *)
+    | Asm.Pldrx rd a => ([ReadRequest txid pid a; Pldrx pid txid; ReadAck rd txid pid; Pincpc pid])                               (**r load int64 *)
+    | Asm.Pldrx_a rd a => ([ReadRequest txid pid a; Pldrx_a pid txid; ReadAck rd txid pid; Pincpc pid])                           (**r load int64 as any64 *)
+    | Asm.Pldrb sz rd a => ([ReadRequest txid pid a; Pldrb sz pid txid; ReadAck rd txid pid; Pincpc pid])                         (**r load int8, zero-extend *)
+    | Asm.Pldrsb sz rd a => ([ReadRequest txid pid a; Pldrsb sz pid txid; ReadAck rd txid pid; Pincpc pid])                       (**r load int8, sign-extend *)
+    | Asm.Pldrh sz rd a => ([ReadRequest txid pid a; Pldrh sz pid txid; ReadAck rd txid pid; Pincpc pid])                         (**r load int16, zero-extend *)
+    | Asm.Pldrsh sz rd a => ([ReadRequest txid pid a; Pldrsh sz pid txid; ReadAck rd txid pid; Pincpc pid])                       (**r load int16, sign-extend *)
+    | Asm.Pldrzw rd a => ([ReadRequest txid pid a; Pldrzw pid txid; ReadAck rd txid pid; Pincpc pid])                             (**r load int32, zero-extend to int64 *)
+    | Asm.Pldrsw rd a => ([ReadRequest txid pid a; Pldrsw pid txid; ReadAck rd txid pid; Pincpc pid])                             (**r load int32, sign-extend to int64 *)
+    | Asm.Pldp rd1 rd2 a => ([Pldp rd1 rd2 pid txid])                        (**r load two int64 - not generated by compcert*)
     | Asm.Pstrw rs a => translate_write asm_i pid txid                             (**r store int32 *)
     | Asm.Pstrw_a rs a => translate_write asm_i pid txid                         (**r store int32 as any32 *)
     | Asm.Pstrx rs a => translate_write asm_i pid txid                           (**r store int64 *)
@@ -1019,9 +1028,9 @@ Definition asm_to_memsim (asm_i: Asm.instruction) (pid: processor_id)(txid: mem_
     | Asm.Pumulh rd r1 r2 => ([Pumulh rd r1 r2 pid; Pincpc pid])
     | Asm.Psdiv sz rd r1 r2 => ([Psdiv sz rd r1 r2 pid; Pincpc pid])
     | Asm.Pudiv sz rd r1 r2 => ([Pudiv sz rd r1 r2 pid; Pincpc pid])
-    | Asm.Pldrs rd a => ([ReadRequest txid pid a; Pldrs rd a pid txid; Pincpc pid ])                           (**r Floating-point loads and stores *)
-    | Asm.Pldrd rd a =>  ([ReadRequest txid pid a; Pldrd rd a pid txid; Pincpc pid])
-    | Asm.Pldrd_a rd a =>  ([ReadRequest txid pid a; Pldrd_a rd a pid txid; Pincpc pid])
+    | Asm.Pldrs rd a => ([ReadRequest txid pid a; Pldrs pid txid; ReadAck rd txid pid; Pincpc pid])                           (**r Floating-point loads and stores *)
+    | Asm.Pldrd rd a =>  ([ReadRequest txid pid a; Pldrd pid txid; ReadAck rd txid pid; Pincpc pid])
+    | Asm.Pldrd_a rd a =>  ([ReadRequest txid pid a; Pldrd_a pid txid; ReadAck rd txid pid; Pincpc pid])
     | Asm.Pstrs rs a => translate_write asm_i pid txid                           (**r store single-precision float *)
     | Asm.Pstrd rs a => translate_write asm_i pid txid 
     | Asm.Pstrd_a rs a => translate_write asm_i pid txid 
@@ -1302,10 +1311,10 @@ Ltac temp_solver :=
 Theorem asm_identical_to_forward_sim: forall (pr: preg) (g: genv)(f: function) (i: Asm.instruction) (rs: regset) (ars: allregsets) (m: mem) (pid: processor_id) (ifm: in_flight_mem_ops) (eaw: early_ack_writes), 
     no_early_acks eaw pid -> regs_identical ars pid rs -> end_state_equals_asm_memsim pr (exec_instr g f i rs  m)  (eval_memsim_chain g f (asm_to_memsim i pid 0) ars m ifm eaw) pid .
 Proof.
-intros. pose proof H0 as ri. unfold no_early_acks in H. unfold regs_identical in H0.  unfold end_state_equals_asm_memsim. remember i as orig_i eqn:H_orig_i. rewrite -> H_orig_i. destruct i; simpl; try unfold Asm.goto_label; try unfold goto_label; try unfold Asm.eval_testcond; try unfold eval_testcond; try unfold Asm.exec_load; try unfold read_ack; try unfold read_request; try unfold Asm.exec_store; try unfold write_ack; try unfold write_request; try unfold early_ack_write; unfold serialize_write; try unfold Mem.loadv; try unfold eval_addressing; try unfold Asm.eval_addressing; unfold Asm.compare_long; unfold compare_long; unfold Asm.compare_int; unfold compare_int; unfold Asm.ir0w; unfold ir0w; unfold Asm.ir0x; unfold ir0x; unfold Asm.compare_single; unfold compare_single; unfold Asm.compare_float; unfold compare_float;destruct matches; try split; try unfold nextinstr; try apply set_method_sem_eq; sem_eq_solver. 
+intros. pose proof H0 as ri. unfold no_early_acks in H. unfold regs_identical in H0.  unfold end_state_equals_asm_memsim. remember i as orig_i eqn:H_orig_i. rewrite -> H_orig_i. destruct i; simpl; try unfold Asm.goto_label; try unfold goto_label; try unfold Asm.eval_testcond; try unfold eval_testcond; try unfold Asm.exec_load; try unfold serialize_read; unfold read_ack; try unfold read_request; try unfold Asm.exec_store; try unfold write_ack; try unfold write_request; try unfold early_ack_write; unfold serialize_write; try unfold Mem.loadv; try unfold eval_addressing; try unfold Asm.eval_addressing; unfold Asm.compare_long; unfold compare_long; unfold Asm.compare_int; unfold compare_int; unfold Asm.ir0w; unfold ir0w; unfold Asm.ir0x; unfold ir0x; unfold Asm.compare_single; unfold compare_single; unfold Asm.compare_float; unfold compare_float;destruct matches; try split; try unfold nextinstr; try apply set_method_sem_eq; sem_eq_solver. 
 
 (*Solves 21/26 proof by contradiction of Pbtbl*)
-all: try temp_solver. 
+all: try temp_solver.
 
 assert (regs_identical (ars @ (pid, X16) <- Vundef) pid (rs # X16 <- Vundef)). apply id_writes_preserve_id_regs. auto. apply ri.
 pose proof H1 as Hdup. specialize (H1 r1). rewrite <- H1 in Heqv1. rewrite -> Heqv1 in Heqv. inversion Heqv. subst.
@@ -1332,34 +1341,34 @@ Proof. intros. destruct H. destruct H0. destruct H1. subst. reflexivity. Qed.
 
 (* need some way of abstracting 
 for a given instruction if an argument is a data source/data sink*)
-(* Does it make sense to treat EAW as its own thing? idt so - come back to it?*)
-(* In flight memory operations cannot be overwritten, so we ignore them here*)
 Inductive data_resource: Type :=
     | SingleReg: processor_id -> preg -> data_resource
     | SingleMemAddr: memory_chunk -> val -> data_resource
+    | TransactionId: mem_transaction_id -> data_resource
     .
 
 Definition data_res_eq (d1 d2: data_resource): Prop :=
     match d1, d2 with
     | SingleReg p1 r1, SingleReg p2 r2 => p1 = p2 /\ r1 = r2
     | SingleMemAddr c1 a1, SingleMemAddr c2 a2 => c1 = c2 /\ a1 = a2
+    | TransactionId t1, TransactionId t2 => t1 = t2
     | _, _ => False
     end.
 
 Definition iregz_same_resource (r: ireg0) (pid: processor_id)(dr: data_resource) : Prop :=
     match r with 
-    | RR0 r1 => data_res_eq dr (SingleReg pid r1 ) 
+    | RR0 r1 => data_res_eq (SingleReg pid r1) dr 
     | XZR => False
     end.
     
     
 Remark data_res_isomorphism: forall r, data_res_eq r r.
 Proof.
-    intros. destruct r. unfold data_res_eq. split; reflexivity. unfold data_res_eq. split; reflexivity. 
+    intros. destruct r; unfold data_res_eq; split; reflexivity.  
 Qed.
 
 Lemma symb_data_eq: forall (x y: data_resource), {x=y} + {x<>y}.
-Proof. decide equality. apply preg_eq. apply Z.eq_dec. apply Val.eq. apply AST.chunk_eq.
+Proof. decide equality. apply preg_eq. apply Z.eq_dec. apply Val.eq. apply AST.chunk_eq. apply tx_eq.
 Qed.
 
 (* TODO Check if data resource d is an input for address a. Requires checking the regs of A*)
@@ -1391,32 +1400,32 @@ Definition data_source(i: instruction) (dr: data_resource): Prop :=
    | Pbc c lbl  pid => data_res_eq (SingleReg pid (CR CZ)) dr                                    (**r conditional branch *)
    | Pbl id sg pid => data_res_eq (SingleReg pid PC) dr                                 (**r jump to function and link *)
    | Pbs id sg pid => False                              (**r jump to function *)
-   | Pblr r sg  pid => data_res_eq (SingleReg pid PC) dr                                  (**r indirect jump and link *)
-   | Pbr r sg   pid => data_res_eq (SingleReg pid PC)  dr                                 (**r indirect jump *)
-   | Pret r pid => False                                              (**r return *)
+   | Pblr r sg  pid => data_res_eq (SingleReg pid PC) dr \/ data_res_eq (SingleReg pid r) dr                             (**r indirect jump and link *)
+   | Pbr r sg   pid => data_res_eq (SingleReg pid RA) dr  \/ data_res_eq (SingleReg pid r) dr                        (**r indirect jump *)
+   | Pret r pid => data_res_eq (SingleReg pid r) dr                                              (**r return *)
    | Pcbnz sz r lbl    pid => data_res_eq (SingleReg pid r) dr                      (**r branch if not zero *)
    | Pcbz sz r lbl pid => data_res_eq (SingleReg pid r) dr                         (**r branch if zero *)
    | Ptbnz sz r n lbl   pid => data_res_eq (SingleReg pid r) dr               (**r branch if bit n is not zero *)
    | Ptbz sz r n lbl pid => data_res_eq (SingleReg pid r) dr                  (**r branch if bit n is zero *)
    (** Memory loads and stores *)
-   | Pldrw rd a pid tx_id =>  False                            (**r load int32 *)
-   | Pldrw_a rd a pid tx_id =>  False                                (**r load int32 as any32 *)
-   | Pldrx rd a pid tx_id =>  False                                 (**r load int64 *)
-   | Pldrx_a rd a pid tx_id =>  False                                (**r load int64 as any64 *)
-   | Pldrb sz rd a pid tx_id =>  False                        (**r load int8, zero-extend *)
-   | Pldrsb sz rd a pid tx_id =>  False                       (**r load int8, sign-extend *)
-   | Pldrh sz rd a pid tx_id =>  False                       (**r load int16, zero-extend *)
-   | Pldrsh sz rd a pid tx_id =>  False                       (**r load int16, sign-extend *)
-   | Pldrzw rd a  pid tx_id =>  False                                 (**r load int32, zero-extend to int64 *)
-   | Pldrsw rd a pid tx_id => False                                (**r load int32, sign-extend to int64 *)
-   | Pldp rd1 rd2 a pid tx_id => False                            (**r load two int64 *)
+   | Pldrw pid txid =>  data_res_eq (TransactionId txid) dr                            (**r load int32 *)
+   | Pldrw_a pid txid =>  data_res_eq (TransactionId txid) dr                                (**r load int32 as any32 *)
+   | Pldrx pid txid =>  data_res_eq (TransactionId txid) dr                                 (**r load int64 *)
+   | Pldrx_a pid txid =>  data_res_eq (TransactionId txid) dr                                (**r load int64 as any64 *)
+   | Pldrb sz pid txid =>  data_res_eq (TransactionId txid) dr                        (**r load int8, zero-extend *)
+   | Pldrsb sz pid txid =>  data_res_eq (TransactionId txid) dr                       (**r load int8, sign-extend *)
+   | Pldrh sz pid txid =>  data_res_eq (TransactionId txid) dr                       (**r load int16, zero-extend *)
+   | Pldrsh sz pid txid =>  data_res_eq (TransactionId txid) dr                       (**r load int16, sign-extend *)
+   | Pldrzw  pid txid =>  data_res_eq (TransactionId txid) dr                                 (**r load int32, zero-extend to int64 *)
+   | Pldrsw pid txid => data_res_eq (TransactionId txid) dr                                (**r load int32, sign-extend to int64 *)
+   | Pldp rd1 a pid txid => data_res_eq (TransactionId txid) dr                            (**r load two int64 *)
    (** Stores *)
-   | Pstrw  a pid txid => False                            (**r store int32 *)
-   | Pstrw_a  a pid txid => False                                  (**r store int32 as any32 *)
-   | Pstrx  a pid txid => False                                   (**r store int64 *)
-   | Pstrx_a  a pid txid => False                                (**r store int64 as any64 *)
-   | Pstrb  a pid txid => False                                 (**r store int8 *)
-   | Pstrh  a pid txid => False                                 (**r store int16 *)
+   | Pstrw a pid txid => data_res_eq (TransactionId txid) dr                            (**r store int32 *)
+   | Pstrw_a a pid txid => data_res_eq (TransactionId txid) dr                                  (**r store int32 as any32 *)
+   | Pstrx a pid txid => data_res_eq (TransactionId txid) dr                                   (**r store int64 *)
+   | Pstrx_a a pid txid => data_res_eq (TransactionId txid) dr                                (**r store int64 as any64 *)
+   | Pstrb a pid txid => data_res_eq (TransactionId txid) dr                                 (**r store int8 *)
+   | Pstrh a pid txid => data_res_eq (TransactionId txid) dr                                 (**r store int16 *)
    | Pstp a pid txid => True                              (**Not generated by compcert *)
    (** Integer arithmetic, immediate *)
    | Paddimm sz rd r1 n  pid => data_res_eq (SingleReg pid (preg_of_iregsp r1)) dr            (**r addition *)
@@ -1486,12 +1495,12 @@ Definition data_source(i: instruction) (dr: data_resource): Prop :=
    | Psdiv sz rd r1 r2 pid => data_res_eq (SingleReg pid r1) dr \/ data_res_eq (SingleReg pid r2) dr                       (**r signed division *)
    | Pudiv sz rd r1 r2 pid => data_res_eq (SingleReg pid r1) dr \/ data_res_eq (SingleReg pid r2) dr                       (**r unsigned division *)
    (** Floating-point loads and stores *)
-   | Pldrs rd a pid tx_id => False                                   (**r load float32 (single precision) *)
-   | Pldrd rd a pid tx_id => False                                  (**r load float64 (double precision) *)
-   | Pldrd_a rd a pid tx_id => False                                (**r load float64 as any64 *)
-   | Pstrs a pid tx_id => False                                   (**r store float32 *)
-   | Pstrd a pid tx_id => False                                   (**r store float64 *)
-   | Pstrd_a a pid tx_id=> False                                (**r store float64 as any64 *)
+   | Pldrs pid txid => data_res_eq (TransactionId txid) dr                                   (**r load float32 (single precision) *)
+   | Pldrd pid txid => data_res_eq (TransactionId txid) dr                                  (**r load float64 (double precision) *)
+   | Pldrd_a pid txid => data_res_eq (TransactionId txid) dr                                (**r load float64 as any64 *)
+   | Pstrs a pid txid => data_res_eq (TransactionId txid) dr                                   (**r store float32 *)
+   | Pstrd a pid txid => data_res_eq (TransactionId txid) dr                                   (**r store float64 *)
+   | Pstrd_a a pid txid=> data_res_eq (TransactionId txid) dr                                (**r store float64 as any64 *)
    (** Floating-point move *)
    | Pfmov rd r1 pid => data_res_eq (SingleReg pid r1) dr
    | Pfmovimms rd f  pid => False                                (**r load float32 constant *)
@@ -1543,10 +1552,11 @@ Definition data_source(i: instruction) (dr: data_resource): Prop :=
                     | SingleReg pid' _ => pid = pid'
                     | _ => False
                     end
-    | EarlyAck txid pid => False
-    | WriteRequest txid pid a rd => data_address_src pid a dr \/ data_res_eq (SingleReg pid rd) dr
-    | ReadRequest txid pid a => data_address_src  pid a dr
-    | WriteAck txid pid => False
+    | EarlyAck txid pid => data_res_eq (TransactionId txid) dr
+    | WriteRequest txid pid a rd => data_address_src pid a dr \/ data_res_eq (SingleReg pid rd) dr \/ data_res_eq (TransactionId txid) dr
+    | ReadRequest txid pid a => data_address_src  pid a dr \/ data_res_eq (TransactionId txid) dr
+    | WriteAck txid pid => data_res_eq (TransactionId txid) dr
+    | ReadAck r txid pid => data_res_eq (TransactionId txid) dr
     end.
 
 (* checks if instruction writes to dr*)
@@ -1560,32 +1570,31 @@ Definition data_sink(i: instruction) (dr: data_resource) (g: genv) (ars: allregs
     | Pbs id sg pid => data_res_eq (SingleReg pid PC) dr                                   (**r jump to function *)
     | Pblr r sg  pid => data_res_eq (SingleReg pid PC) dr  \/ data_res_eq (SingleReg pid RA) dr                                (**r indirect jump and link *)
     | Pbr r sg   pid => data_res_eq (SingleReg pid PC) dr                                   (**r indirect jump *)
-    | Pret r pid => data_res_eq  (SingleReg pid PC) dr                                               (**r return *)
+    | Pret r pid => data_res_eq (SingleReg pid PC) dr                                             (**r return *)
     | Pcbnz sz r lbl    pid => data_res_eq (SingleReg pid PC) dr                       (**r branch if not zero *)
     | Pcbz sz r lbl pid => data_res_eq (SingleReg pid PC) dr                           (**r branch if zero *)
     | Ptbnz sz r n lbl   pid => data_res_eq (SingleReg pid PC) dr               (**r branch if bit n is not zero *)
     | Ptbz sz r n lbl pid => data_res_eq (SingleReg pid PC) dr                  (**r branch if bit n is zero *)
     (** Memory loads and stores *)
-    | Pldrw rd a pid tx_id => data_res_eq (SingleReg pid rd) dr                                 (**r load int32 *)
-    | Pldrw_a rd a pid tx_id => data_res_eq (SingleReg pid rd)  dr                              (**r load int32 as any32 *)
-    | Pldrx rd a pid tx_id => data_res_eq (SingleReg pid rd) dr                                (**r load int64 *)
-    | Pldrx_a rd a pid tx_id => data_res_eq (SingleReg pid rd)  dr                              (**r load int64 as any64 *)
-    | Pldrb sz rd a pid tx_id => data_res_eq (SingleReg pid (preg_of_iregsp rd)) dr                       (**r load int8, zero-extend *)
-    | Pldrsb sz rd a pid tx_id => data_res_eq (SingleReg pid (preg_of_iregsp rd)) dr                     (**r load int8, sign-extend *)
-    | Pldrh sz rd a pid tx_id => data_res_eq (SingleReg pid (preg_of_iregsp rd))  dr                     (**r load int16, zero-extend *)
-    | Pldrsh sz rd a pid tx_id => data_res_eq (SingleReg pid (preg_of_iregsp rd))  dr                    (**r load int16, sign-extend *)
-    | Pldrzw rd a  pid tx_id => data_res_eq (SingleReg pid rd)  dr                               (**r load int32, zero-extend to int64 *)
-    | Pldrsw rd a pid tx_id => data_res_eq (SingleReg pid rd)  dr                               (**r load int32, sign-extend to int64 *)
-    | Pldp rd1 rd2 a pid tx_id => data_res_eq (SingleReg pid rd1) dr \/ data_res_eq (SingleReg pid rd2) dr                              (**r load two int64 *)
-    (*TODO: check this works *)
+    | Pldrw pid txid => data_res_eq (TransactionId txid) dr                                 (**r load int32 *)
+    | Pldrw_a pid txid => data_res_eq (TransactionId txid) dr                                  (**r load int32 as any32 *)
+    | Pldrx pid txid => data_res_eq (TransactionId txid) dr                                  (**r load int64 *)
+    | Pldrx_a pid txid => data_res_eq (TransactionId txid) dr                                 (**r load int64 as any64 *)
+    | Pldrb sz pid txid => data_res_eq (TransactionId txid) dr                        (**r load int8, zero-extend *)
+    | Pldrsb sz pid txid => data_res_eq (TransactionId txid) dr                        (**r load int8, sign-extend *)
+    | Pldrh sz pid txid => data_res_eq (TransactionId txid) dr                        (**r load int16, zero-extend *)
+    | Pldrsh sz pid txid => data_res_eq (TransactionId txid) dr                      (**r load int16, sign-extend *)
+    | Pldrzw  pid txid => data_res_eq (TransactionId txid) dr                                 (**r load int32, zero-extend to int64 *)
+    | Pldrsw pid txid => data_res_eq (TransactionId txid) dr                                 (**r load int32, sign-extend to int64 *)
+    | Pldp rd1 rd2 id txid => True (*not modeled by CompCErt*)                                (**r load two int64 *)
     (* explanation: check if r is a memory address and, if so, check if a stores in r. Can check by evaluating both??? *)
-    | Pstrw a pid tx_id => data_address_sink a g ars pid dr                                (**r store int32 *)
-    | Pstrw_a a pid tx_id => data_address_sink a g ars pid dr                                 (**r store int32 as any32 *)
-    | Pstrx a pid tx_id => data_address_sink a g ars pid dr                                   (**r store int64 *)
-    | Pstrx_a a pid tx_id => data_address_sink a g ars pid dr                                 (**r store int64 as any64 *)
-    | Pstrb a pid tx_id => data_address_sink a g ars pid dr                                  (**r store int8 *)
-    | Pstrh a pid tx_id => data_address_sink a g ars pid dr                                  (**r store int16 *)
-    | Pstp a pid tx_id => data_address_sink a g ars pid dr                               (**r store two int64 *)
+    | Pstrw a pid txid => data_address_sink a g ars pid dr  \/ data_res_eq (TransactionId txid) dr                                   (**r store int32 *)
+    | Pstrw_a a pid txid => data_address_sink a g ars pid dr  \/ data_res_eq (TransactionId txid) dr                                    (**r store int32 as any32 *)
+    | Pstrx a pid txid => data_address_sink a g ars pid dr  \/ data_res_eq (TransactionId txid) dr                                     (**r store int64 *)
+    | Pstrx_a a pid txid => data_address_sink a g ars pid dr  \/ data_res_eq (TransactionId txid) dr                                   (**r store int64 as any64 *)
+    | Pstrb a pid txid => data_address_sink a g ars pid dr    \/ data_res_eq (TransactionId txid) dr                                  (**r store int8 *)
+    | Pstrh a pid txid => data_address_sink a g ars pid dr  \/ data_res_eq (TransactionId txid) dr                                     (**r store int16 *)
+    | Pstp a pid txid => data_address_sink a g ars pid dr   \/ data_res_eq (TransactionId txid) dr                                (**r store two int64 *)
     (** Integer arithmetic, immediate *)
     | Paddimm sz rd r1 n  pid => data_res_eq (SingleReg pid (preg_of_iregsp rd)) dr           (**r addition *)
     | Psubimm sz rd r1 n pid => data_res_eq (SingleReg pid (preg_of_iregsp rd)) dr               (**r subtraction *)
@@ -1653,16 +1662,16 @@ Definition data_sink(i: instruction) (dr: data_resource) (g: genv) (ars: allregs
     | Psdiv sz rd r1 r2 pid => data_res_eq (SingleReg pid rd) dr                        (**r signed division *)
     | Pudiv sz rd r1 r2 pid => data_res_eq (SingleReg pid rd) dr                        (**r unsigned division *)
     (** Floating-point loads and stores *)
-    | Pldrs rd a pid tx_id => data_res_eq (SingleReg pid rd) dr                                   (**r load float32 (single precision) *)
-    | Pldrd rd a pid tx_id => data_res_eq (SingleReg pid rd)  dr                                 (**r load float64 (double precision) *)
-    | Pldrd_a rd a pid tx_id => data_res_eq (SingleReg pid rd) dr                               (**r load float64 as any64 *)
-    | Pstrs a pid tx_id => data_address_sink a g ars pid dr                                 (**r store float32 *)
-    | Pstrd a pid tx_id =>  data_address_sink a g ars pid dr                               (**r store float64 *)
-    | Pstrd_a a pid tx_id => data_address_sink a g ars pid dr                            (**r store float64 as any64 *)
+    | Pldrs pid txid =>  data_res_eq (TransactionId txid) dr                                     (**r load float32 (single precision) *)
+    | Pldrd pid txid => data_res_eq (TransactionId txid) dr                                  (**r load float64 (double precision) *)
+    | Pldrd_a pid txid =>  data_res_eq (TransactionId txid) dr                                 (**r load float64 as any64 *)
+    | Pstrs a pid txid => data_address_sink a g ars pid dr   \/ data_res_eq (TransactionId txid) dr                                  (**r store float32 *)
+    | Pstrd a pid txid =>  data_address_sink a g ars pid dr   \/ data_res_eq (TransactionId txid) dr                                (**r store float64 *)
+    | Pstrd_a a pid txid => data_address_sink a g ars pid dr  \/ data_res_eq (TransactionId txid) dr                              (**r store float64 as any64 *)
     (** Floating-point move *)
     | Pfmov rd r1 pid => data_res_eq (SingleReg pid rd) dr 
-    | Pfmovimms rd f  pid => data_res_eq (SingleReg pid rd) dr                                (**r load float32 constant *)
-    | Pfmovimmd rd f  pid => data_res_eq (SingleReg pid rd) dr                                  (**r load float64 constant *)
+    | Pfmovimms rd f  pid => data_res_eq (SingleReg pid rd) dr \/ data_res_eq (SingleReg pid X16) dr                               (**r load float32 constant *)
+    | Pfmovimmd rd f  pid => data_res_eq (SingleReg pid rd) dr  \/ data_res_eq (SingleReg pid X16) dr                               (**r load float64 constant *)
     | Pfmovi fsz rd r1 pid => data_res_eq (SingleReg pid rd) dr                         (**r copy int reg to FP reg *)
     (** Floating-point conversions *)
     | Pfcvtds rd r1  pid => data_res_eq (SingleReg pid rd) dr                                            (**r convert float32 to float64 *)
@@ -1692,8 +1701,8 @@ Definition data_sink(i: instruction) (dr: data_resource) (g: genv) (ars: allregs
     (** Floating-point conditional select *)
     | Pfsel rd r1 r2 cond pid => data_res_eq (SingleReg pid rd) dr
     (** Pseudo-instructions *)
-    | Pallocframe sz linkofs pid => False                            (**r allocate new stack frame *)
-    | Pfreeframe sz linkofs pid => False                             (**r deallocate stack frame and restore previous frame *)
+    | Pallocframe sz linkofs pid => data_res_eq (SingleReg pid X15) dr \/ data_res_eq (SingleReg pid X16) dr                            (**r allocate new stack frame *)
+    | Pfreeframe sz linkofs pid => data_res_eq (SingleReg pid X16) dr                              (**r deallocate stack frame and restore previous frame *)
     | Plabel lbl pid => False                                              (**r define a code label *)
     | Ploadsymbol rd id pid => data_res_eq (SingleReg pid rd) dr                                (**r load the address of [id] *)
     | Pcvtsw2x rd r1 pid => data_res_eq (SingleReg pid rd) dr                                    (**r sign-extend 32-bit int to 64-bit *)
@@ -1709,11 +1718,13 @@ Definition data_sink(i: instruction) (dr: data_resource) (g: genv) (ars: allregs
                     | SingleReg pid' _ => pid = pid'
                     | _ => False
                     end
-    | EarlyAck txid pid => False
-    | WriteRequest txid pid a rd => False
-    | ReadRequest txid pid a => False
-    | WriteAck txid pid => False
-end.
+    | EarlyAck txid pid =>  data_res_eq (TransactionId txid) dr
+    | WriteRequest txid pid a rd =>  data_res_eq (TransactionId txid) dr
+    | ReadRequest txid pid a =>  data_res_eq (TransactionId txid) dr
+    | WriteAck txid pid =>  data_res_eq (TransactionId txid) dr
+    | ReadAck r txid pid => data_res_eq (SingleReg pid r) dr \/ data_res_eq (TransactionId txid) dr    
+    end.
+
 
 Definition disabled_instr(i: instruction): Prop :=
     match i with
@@ -1774,12 +1785,17 @@ Remark different_procs_different_resources: forall r pid1 pid2,
 Proof. unfold not. intros. apply H. exists (SingleReg pid1 r). subst. split; apply data_res_isomorphism.
 Qed.
 
-Remark different_something_different_resource: forall r1 r2 pid1 pid2,
+Remark different_preg_different_resource: forall r1 r2 pid1 pid2,
 ~ (exists dr : data_resource, data_res_eq (SingleReg pid1 r1) dr /\ data_res_eq (SingleReg pid2 r2) dr) -> pair pid1 r1 <> pair pid2 r2.
 Proof.
 intros. unfold not. intro. apply H. exists (SingleReg pid1 r1). split. apply data_res_isomorphism. inversion H0. subst. apply data_res_isomorphism.
 Qed.
 
+Remark different_transactions_different_resource: forall txid1 txid2,
+~(exists dr: data_resource, data_res_eq (TransactionId txid1) dr /\ data_res_eq (TransactionId txid2) dr) -> txid1 <> txid2.
+Proof.
+unfold not. intros. apply H. exists (TransactionId txid1). split. apply data_res_isomorphism. subst. apply data_res_isomorphism.
+Qed.
 
 Remark split_hazards_generic_l: forall (t: Type)(P Q R: t -> Prop),
 (~(exists r : t, P r /\ (Q r \/ R r))) <-> (~ (exists r : t, P r/\ Q r) /\ ~ (exists r : t, P r /\ R r)).
@@ -1806,7 +1822,7 @@ split.
 Qed.
 
 Remark split_hazards: forall (dr1 dr2 dr3: data_resource),
-(~exists r : data_resource, data_res_eq r dr1 /\ (data_res_eq r dr2 \/ data_res_eq r dr3))  -> ~ (exists r : data_resource, data_res_eq r dr1 /\ data_res_eq r dr2 ) /\ ~(exists r: data_resource, data_res_eq r dr1 /\ data_res_eq r dr3).
+(~exists r : data_resource, data_res_eq dr1 r /\ (data_res_eq dr2 r \/ data_res_eq dr3 r))  -> ~ (exists r : data_resource, data_res_eq dr1 r /\ data_res_eq dr2 r) /\ ~(exists r: data_resource, data_res_eq dr1 r /\ data_res_eq dr3 r).
 Proof.
 unfold not. intros. split. intro. apply H. exists dr1. destruct H0 as [x [Hp1 Hp2]]. split. apply data_res_isomorphism. left. destruct x. unfold data_res_eq.
 
@@ -1814,22 +1830,29 @@ unfold data_res_eq. destruct dr1; destruct dr2; unfold data_res_eq in Hp1, Hp2; 
 
 unfold data_res_eq. destruct dr1; destruct dr2; unfold data_res_eq in Hp1, Hp2; try contradiction. destruct Hp1. destruct Hp2. subst. split;reflexivity.
 
+unfold data_res_eq. destruct dr1; destruct dr2; unfold data_res_eq in Hp1, Hp2; try contradiction. destruct Hp1. destruct Hp2. reflexivity.
+
 intro.
 apply H. exists dr1. destruct H0 as [x [Hp1 Hp2]]. split. apply data_res_isomorphism. right. destruct x. unfold data_res_eq.
 
 unfold data_res_eq. destruct dr1; destruct dr3; unfold data_res_eq in Hp1, Hp2; try contradiction. destruct Hp1. destruct Hp2. subst. split;reflexivity.
 
 unfold data_res_eq. destruct dr1; destruct dr3; unfold data_res_eq in Hp1, Hp2; try contradiction. destruct Hp1. destruct Hp2. subst. split;reflexivity.
+unfold data_res_eq. destruct dr1; destruct dr3; unfold data_res_eq in Hp1, Hp2; try contradiction. destruct Hp1. destruct Hp2. reflexivity.
+
 Qed.
 
 Remark split_hazards_comm: forall (dr1 dr2 dr3: data_resource),
-(~exists r : data_resource, (data_res_eq r dr2 \/ data_res_eq r dr3) /\ data_res_eq r dr1)  -> ~ (exists r : data_resource, data_res_eq r dr1 /\ data_res_eq r dr2 ) /\ ~(exists r: data_resource, data_res_eq r dr1 /\ data_res_eq r dr3).
+(~exists r : data_resource, (data_res_eq dr2 r \/ data_res_eq dr3 r) /\ data_res_eq dr1 r)  -> ~ (exists r : data_resource, data_res_eq dr1 r /\ data_res_eq dr2 r) /\ ~(exists r: data_resource, data_res_eq dr1 r /\ data_res_eq dr3 r).
 Proof.
 unfold not. intros. split. intro. apply H. exists dr1. destruct H0 as [x [Hp1 Hp2]]. split. left. destruct x.
 
 unfold data_res_eq. destruct dr1; destruct dr2; unfold data_res_eq in Hp1, Hp2; try contradiction. destruct Hp1. destruct Hp2. subst. split;reflexivity.
 
 unfold data_res_eq. destruct dr1; destruct dr2; unfold data_res_eq in Hp1, Hp2; try contradiction. destruct Hp1. destruct Hp2. subst. split;reflexivity.
+
+unfold data_res_eq. destruct dr1; destruct dr2; unfold data_res_eq in Hp1, Hp2; try contradiction. destruct Hp1. destruct Hp2. reflexivity.
+
 
 apply data_res_isomorphism.
 
@@ -1839,11 +1862,15 @@ apply H. exists dr1. destruct H0 as [x [Hp1 Hp2]]. split. right. destruct x. unf
 unfold data_res_eq. destruct dr1; destruct dr3; unfold data_res_eq in Hp1, Hp2; try contradiction. destruct Hp1. destruct Hp2. subst. split;reflexivity.
 
 unfold data_res_eq. destruct dr1; destruct dr3; unfold data_res_eq in Hp1, Hp2; try contradiction. destruct Hp1. destruct Hp2. subst. split;reflexivity.
+
+unfold data_res_eq. destruct dr1; destruct dr3; unfold data_res_eq in Hp1, Hp2; try contradiction. destruct Hp1. destruct Hp2. reflexivity.
+
+
 apply data_res_isomorphism.
 Qed.
 
 Remark resources_are_different_resources: forall r1 r2,  ~
- (exists r : data_resource, data_res_eq r r1 /\ data_res_eq r r2) ->  r1 <> r2.
+ (exists r : data_resource, data_res_eq r1 r /\ data_res_eq r2 r) ->  r1 <> r2.
  Proof.
  unfold not. intros. apply H. exists r1. 
  split. try apply data_res_isomorphism. auto. 
@@ -1908,15 +1935,19 @@ Ltac reorder_solver :=
     | [H_not_comm: ?a <> ?b |- ?b <> ?a] => apply neq_comm in H_not_comm; assumption (*Terminal*)
     (* Boring transitivity*)
     | H_l: ?a = ?b, H_r: context[?a] |- _ => rewrite H_l in H_r; try inversion H_r; subst; reorder_solver (* Nonterminal*)
-    | H_l: ?a = ?b |- context[?a] => rewrite H_l; subst; reorder_solver (* Nonterminal*)
+    | H_l: ?a = ?b |- context[?a] => rewrite H_l; try inversion H_l; subst; reorder_solver (* Nonterminal*)
     (*break apart exists dr statements*)
     | H_e: ~(exists r : data_resource, data_res_eq ?d r /\ data_res_eq ?d r) |- _ => apply hazard_elimination in H_e; contradiction +  unfold not;  intros;  discriminate H_e (*Terminal*)
     | H_e: ~(exists r : data_resource, data_res_eq ?d r /\ True) |- _ => apply hazard_elimination in H_e; contradiction +  unfold not;  intros;  discriminate H_e (*Terminal*)
     | H_e: ~(exists r : data_resource, _ /\ (_ \/ _)) |- _ => apply split_hazards_generic_l in H_e; destruct H_e; reorder_solver (*Nonterminal*)
     | H_e: ~(exists r : data_resource, (_ \/ _) /\ _) |- _ => apply split_hazards_generic_r in H_e; destruct H_e; reorder_solver (*Nonterminal*)
-
-    | H_e: ~(exists r : data_resource, data_res_eq ?d1 r /\ data_res_eq ?d2 r) |- _ => apply different_something_different_resource in H_e; reorder_solver(*Nonterminal*)
-
+    | H_e: ~(exists r : data_resource, data_res_eq (SingleReg ?pid1 ?dr) r /\ data_res_eq (SingleReg ?pid2 ?dr) r) |- _ => apply different_procs_different_resources in H_e; reorder_solver(*Nonterminal*)
+    | H_e: ~(exists r: data_resource, data_res_eq (TransactionId ?tid1) r /\ data_res_eq (TransactionId ?tid2) r) |- _ => apply different_transactions_different_resource in H_e; reorder_solver(*Nonterminal*)
+    | H_e: ~(exists r : data_resource, data_res_eq (SingleReg ?pid1 ?r1) r /\ data_res_eq (SingleReg ?pid2 ?r2) r) |- _ => apply different_preg_different_resource in H_e; reorder_solver(*Nonterminal*)
+    | H_e: ~(exists r : data_resource, data_res_eq ?d1 r /\ data_res_eq ?d2 r) |- _ => clear H_e; reorder_solver(*Nonterminal*)
+    (*deconstruct vptr - might be able to get rid of this somehow*)
+    | H_v: Vptr ?a ?b = Vptr ?c ?d |- _ => inversion H_v; clear H_v; subst; reorder_solver (*Semiterminal*)
+    | H_sm: Some ?x = Some ?y |- _ => inversion H_sm; clear H_sm; subst; reorder_solver (*Semiterminal*)
     (*deconstruct tuple goals*)
     | [H_ne: ?a <> ?b |- pair ?a _ <> pair ?b _] => apply tuple_fneq; assumption (*Terminal*)
     | [H_ne: ?a <> ?b |- pair _ ?a <> pair _ ?b] => apply tuple_bneq; assumption (*Terminal*)
@@ -1937,19 +1968,54 @@ Ltac reorder_solver :=
     | [H_match_cond: ?a = ?b |- context[match ?a with _ => _ end]] => rewrite H_match_cond; reorder_solver (* Nonterminal*)
     (*destruct equivalence conjunctions*)
     | [ |- ?A /\ ?B /\ ?C /\ ?D] => apply four_and_shortcut; try reflexivity; reorder_solver 
-    (*set commutativity*)
-    | [ |- PRmap.set ?k1 ?v1 (PRmap.set ?k2 ?v2 ?mi) = PRmap.set ?k2 ?v2 (PRmap.set ?k1 ?v1 ?mi)] => rewrite PRmap.gscsc; try reflexivity; reorder_solver (*Semiterminal*)
-    (*good for instructions that set multiple regs*)
+    
+    (*good for instructions that set multiple regs - only used in PRmap*)
     | [ H_ssw: context[PRmap.set (pair ?pid1 _) _ (PRmap.set (pair ?pid2 _) _ ?m) (pair ?pid1 _)] |- _ ] => rewrite PRmap.ssw in H_ssw; reorder_solver
 
+    (*Break down map updates for all map updating types*)
+    (*set commutativity*)
+    | [ |- PRmap.set ?k1 ?v1 (PRmap.set ?k2 ?v2 ?mi) = PRmap.set ?k2 ?v2 (PRmap.set ?k1 ?v1 ?mi)] => rewrite PRmap.gscsc; try reflexivity; reorder_solver (*Semiterminal*)
     (* Break down gss*)
     | [ H_raw: context [PRmap.set ?k ?v ?m ?k] |- _] => rewrite PRmap.gss in H_raw; try discriminate; reorder_solver
     (*Break down gso. Need to be very careful with this - it can lead to unbounded recursion*)
     | [ H_raw: context[PRmap.set ?k1 ?v ?map ?k2]  |- _] => rewrite PRmap.gso in H_raw; reorder_solver (* Nonterminal *)
+    | [|- PRmap.set ?x ?v3 (PRmap.set ?y ?v4 ( PRmap.set ?z ?v5 (PRmap.set ?q ?v1 (PRmap.set ?w ?v2 ?m)))) = PRmap.set ?q ?v1 (PRmap.set ?w ?v2 (PRmap.set ?x ?v3 (PRmap.set ?y ?v4 (PRmap.set ?z ?v5 ?m))))]=> symmetry; rewrite -> PRmap.gscsc_2of5; reorder_solver
+    | [|- PRmap.set ?q ?v1 (PRmap.set ?w ?v2 (PRmap.set ?x ?v3 (PRmap.set ?y ?v4 (PRmap.set ?z ?v5 ?m)))) = PRmap.set ?x ?v3 (PRmap.set ?y ?v4 ( PRmap.set ?z ?v5 (PRmap.set ?q ?v1 (PRmap.set ?w ?v2 ?m))))] => rewrite -> PRmap.gscsc_2of5; reorder_solver
     | [|- PRmap.set ?q ?v1 (PRmap.set ?w ?v2 (PRmap.set ?x ?v3 (PRmap.set ?y ?v4 (PRmap.set ?z ?v5 ?m)))) = PRmap.set ?z ?v5 (PRmap.set ?q ?v1 (PRmap.set ?w ?v2 (PRmap.set ?x ?v3 (PRmap.set ?y ?v4 ?m))))] => rewrite -> PRmap.gscsc_1of5; reorder_solver
     | [|- PRmap.set ?w ?v2 (PRmap.set ?x ?v3 (PRmap.set ?y ?v4 (PRmap.set ?z ?v5 ?m))) = PRmap.set ?z ?v5 (PRmap.set ?w ?v2 (PRmap.set ?x ?v3 (PRmap.set ?y ?v4 ?m)))] => rewrite -> PRmap.gscsc_1of4; reorder_solver
     | [|- PRmap.set ?A ?v1 (PRmap.set ?B ?v2 (PRmap.set ?C ?v3 ?mi)) = PRmap.set ?C ?v3 (PRmap.set ?A ?v1 (PRmap.set ?B ?v2 ?mi))] => rewrite <- PRmap.gscsc_ext; try reflexivity; reorder_solver (* Nonterminal*)
+    | [|- PRmap.set ?A ?v1 (PRmap.set ?B ?v2 (PRmap.set ?C ?v3 ?mi)) = PRmap.set ?B ?v2 (PRmap.set ?C ?v3 (PRmap.set ?A ?v1 ?mi))] => symmetry; rewrite <- PRmap.gscsc_ext; try reflexivity; reorder_solver (* Nonterminal*)
+    | [|- PRmap.set ?w ?v2 (PRmap.set ?x ?v3 (PRmap.set ?y ?v4 (PRmap.set ?z ?v5 ?m))) = PRmap.set ?y ?v4 (PRmap.set ?z ?v5 (PRmap.set ?w ?v2 (PRmap.set ?x ?v3 ?m)))] => rewrite <- PRmap.gscsc_2of4; try reflexivity; reorder_solver (* Nonterminal*)  
     | [|- context[PRmap.set ?k1 _ ?map ?k2]] => rewrite PRmap.gso; reorder_solver (* Nonterminal *)
+    (*set commutativity*)
+    | [ |- Trmap.set ?k1 ?v1 (Trmap.set ?k2 ?v2 ?mi) = Trmap.set ?k2 ?v2 (Trmap.set ?k1 ?v1 ?mi)] => rewrite Trmap.gscsc; try reflexivity; reorder_solver (*Semiterminal*)
+    (* Break down gss*)
+    | [ H_raw: context [Trmap.set ?k ?v ?m ?k] |- _] => rewrite Trmap.gss in H_raw; try discriminate; reorder_solver
+    (*Break down gso. Need to be very careful with this - it can lead to unbounded recursion*)
+    | [ H_raw: context[Trmap.set ?k1 ?v ?map ?k2]  |- _] => rewrite Trmap.gso in H_raw; reorder_solver (* Nonterminal *)
+    | [|- Trmap.set ?x ?v3 (Trmap.set ?y ?v4 ( Trmap.set ?z ?v5 (Trmap.set ?q ?v1 (Trmap.set ?w ?v2 ?m)))) = Trmap.set ?q ?v1 (Trmap.set ?w ?v2 (Trmap.set ?x ?v3 (Trmap.set ?y ?v4 (Trmap.set ?z ?v5 ?m))))]=> symmetry; rewrite -> Trmap.gscsc_2of5; reorder_solver
+    | [|- Trmap.set ?q ?v1 (Trmap.set ?w ?v2 (Trmap.set ?x ?v3 (Trmap.set ?y ?v4 (Trmap.set ?z ?v5 ?m)))) = Trmap.set ?x ?v3 (Trmap.set ?y ?v4 ( Trmap.set ?z ?v5 (Trmap.set ?q ?v1 (Trmap.set ?w ?v2 ?m))))] => rewrite -> Trmap.gscsc_2of5; reorder_solver
+    | [|- Trmap.set ?q ?v1 (Trmap.set ?w ?v2 (Trmap.set ?x ?v3 (Trmap.set ?y ?v4 (Trmap.set ?z ?v5 ?m)))) = Trmap.set ?z ?v5 (Trmap.set ?q ?v1 (Trmap.set ?w ?v2 (Trmap.set ?x ?v3 (Trmap.set ?y ?v4 ?m))))] => rewrite -> Trmap.gscsc_1of5; reorder_solver
+    | [|- Trmap.set ?w ?v2 (Trmap.set ?x ?v3 (Trmap.set ?y ?v4 (Trmap.set ?z ?v5 ?m))) = Trmap.set ?z ?v5 (Trmap.set ?w ?v2 (Trmap.set ?x ?v3 (Trmap.set ?y ?v4 ?m)))] => rewrite -> Trmap.gscsc_1of4; reorder_solver
+    | [|- Trmap.set ?A ?v1 (Trmap.set ?B ?v2 (Trmap.set ?C ?v3 ?mi)) = Trmap.set ?C ?v3 (Trmap.set ?A ?v1 (Trmap.set ?B ?v2 ?mi))] => rewrite <- Trmap.gscsc_ext; try reflexivity; reorder_solver (* Nonterminal*)
+    | [|- Trmap.set ?A ?v1 (Trmap.set ?B ?v2 (Trmap.set ?C ?v3 ?mi)) = Trmap.set ?B ?v2 (Trmap.set ?C ?v3 (Trmap.set ?A ?v1 ?mi))] => symmetry; rewrite <- Trmap.gscsc_ext; try reflexivity; reorder_solver (* Nonterminal*)
+    | [|- Trmap.set ?w ?v2 (Trmap.set ?x ?v3 (Trmap.set ?y ?v4 (Trmap.set ?z ?v5 ?m))) = Trmap.set ?y ?v4 (Trmap.set ?z ?v5 (Trmap.set ?w ?v2 (Trmap.set ?x ?v3 ?m)))] => rewrite <- Trmap.gscsc_2of4; try reflexivity; reorder_solver (* Nonterminal*)  
+    | [|- context[Trmap.set ?k1 _ ?map ?k2]] => rewrite Trmap.gso; reorder_solver (* Nonterminal *)
+
+    (*set commutativity*)
+    | [ |- EWmap.set ?k1 ?v1 (EWmap.set ?k2 ?v2 ?mi) = EWmap.set ?k2 ?v2 (EWmap.set ?k1 ?v1 ?mi)] => rewrite EWmap.gscsc; try reflexivity; reorder_solver (*Semiterminal*)
+    (* Break down gss*)
+    | [ H_raw: context [EWmap.set ?k ?v ?m ?k] |- _] => rewrite EWmap.gss in H_raw; try discriminate; reorder_solver
+    (*Break down gso. Need to be very careful with this - it can lead to unbounded recursion*)
+    | [ H_raw: context[EWmap.set ?k1 ?v ?map ?k2]  |- _] => rewrite EWmap.gso in H_raw; reorder_solver (* Nonterminal *)
+    | [|- EWmap.set ?x ?v3 (EWmap.set ?y ?v4 ( EWmap.set ?z ?v5 (EWmap.set ?q ?v1 (EWmap.set ?w ?v2 ?m)))) = EWmap.set ?q ?v1 (EWmap.set ?w ?v2 (EWmap.set ?x ?v3 (EWmap.set ?y ?v4 (EWmap.set ?z ?v5 ?m))))]=> symmetry; rewrite -> EWmap.gscsc_2of5; reorder_solver
+    | [|- EWmap.set ?q ?v1 (EWmap.set ?w ?v2 (EWmap.set ?x ?v3 (EWmap.set ?y ?v4 (EWmap.set ?z ?v5 ?m)))) = EWmap.set ?x ?v3 (EWmap.set ?y ?v4 ( EWmap.set ?z ?v5 (EWmap.set ?q ?v1 (EWmap.set ?w ?v2 ?m))))] => rewrite -> EWmap.gscsc_2of5; reorder_solver
+    | [|- EWmap.set ?q ?v1 (EWmap.set ?w ?v2 (EWmap.set ?x ?v3 (EWmap.set ?y ?v4 (EWmap.set ?z ?v5 ?m)))) = EWmap.set ?z ?v5 (EWmap.set ?q ?v1 (EWmap.set ?w ?v2 (EWmap.set ?x ?v3 (EWmap.set ?y ?v4 ?m))))] => rewrite -> EWmap.gscsc_1of5; reorder_solver
+    | [|- EWmap.set ?w ?v2 (EWmap.set ?x ?v3 (EWmap.set ?y ?v4 (EWmap.set ?z ?v5 ?m))) = EWmap.set ?z ?v5 (EWmap.set ?w ?v2 (EWmap.set ?x ?v3 (EWmap.set ?y ?v4 ?m)))] => rewrite -> EWmap.gscsc_1of4; reorder_solver
+    | [|- EWmap.set ?A ?v1 (EWmap.set ?B ?v2 (EWmap.set ?C ?v3 ?mi)) = EWmap.set ?C ?v3 (EWmap.set ?A ?v1 (EWmap.set ?B ?v2 ?mi))] => rewrite <- EWmap.gscsc_ext; try reflexivity; reorder_solver (* Nonterminal*)
+    | [|- EWmap.set ?A ?v1 (EWmap.set ?B ?v2 (EWmap.set ?C ?v3 ?mi)) = EWmap.set ?B ?v2 (EWmap.set ?C ?v3 (EWmap.set ?A ?v1 ?mi))] => symmetry; rewrite <- EWmap.gscsc_ext; try reflexivity; reorder_solver (* Nonterminal*)
+    | [|- EWmap.set ?w ?v2 (EWmap.set ?x ?v3 (EWmap.set ?y ?v4 (EWmap.set ?z ?v5 ?m))) = EWmap.set ?y ?v4 (EWmap.set ?z ?v5 (EWmap.set ?w ?v2 (EWmap.set ?x ?v3 ?m)))] => rewrite <- EWmap.gscsc_2of4; try reflexivity; reorder_solver (* Nonterminal*)  
+    | [|- context[EWmap.set ?k1 _ ?map ?k2]] => rewrite EWmap.gso; reorder_solver (* Nonterminal *)
     | _ => try reflexivity
 end.
 
@@ -1963,17 +2029,105 @@ Theorem reorder: forall g (f: function)(i1 i2: instruction) (ars_i: allregsets) 
      output_data_eq ( eval_memsim_instr g f i2  (eval_memsim_instr g f i1 (MemSimNext ars_i m_i ifmo_i eaw_i))) (eval_memsim_instr g f i1  (eval_memsim_instr g f i2  (MemSimNext ars_i m_i ifmo_i eaw_i))).
 Proof. intros. 
 (* Definition unwrapping*)
-unfold data_dependence in H. unfold data_sink, data_source, data_address_sink, data_address_src in H. apply not_or_or_and in H. destruct H.  destruct H1. destruct i1. 
-(* destruct i2; disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; destruct matches; reorder_solver.  *)
+unfold data_dependence in H. unfold data_sink, data_source, data_address_sink, data_address_src in H. apply not_or_or_and in H. destruct H.  destruct H1. destruct i1. destruct i2;
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver; auto.
+Focus 12. 
+destruct i2. Focus 12. reorder_solver. disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *. 
+destruct matches;
+reorder_solver.
 
-destruct i2; disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; destruct matches; reorder_solver. 
-destruct i2; disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; destruct matches; reorder_solver. 
-destruct i2; disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; destruct matches; reorder_solver. 
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+reorder_solver. disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *. destruct matches. 
+auto. apply four_and_shortcut. rewrite EWmap.gso in Heqo5. reorder_solver.
+reorder_solver.
 
+
+
+
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+
+
+Focus 9.
+(* destruct i2; disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; destruct matches; reorder_solver.  *)
+(* destruct i2; admit.
+(* destruct i2; disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; destruct matches; reorder_solver.  *)
+destruct i2; disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.  
+destruct i2; disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+destruct i2; disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver. *)
+destruct i2; disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver. unfold eval_addressing in H2.
+destruct i2; disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+destruct i2; disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+destruct i2; disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+destruct i2; disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+destruct i2; disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+
+(*currently verified up to 9*)
+
+Focus 17.
+
+Unset Printing Notations.
 destruct i2; disable_cmps;
-unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; destruct matches; reorder_solver.
+unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; destruct matches; reorder_solver.
 destruct i2;
-unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold read_ack; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; destruct matches; reorder_solver.
+unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold serialize_write; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; destruct matches. reorder_solver.
 
 
 Qed. 

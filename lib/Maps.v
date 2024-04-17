@@ -1521,6 +1521,25 @@ intros. symmetry. rewrite gscsc; auto. apply EMap.writes_eq.
 rewrite gscsc; auto. apply EMap.writes_eq. rewrite gscsc; auto.
 Qed.
   
+Theorem gscsc_2of4: forall(A: Type)(m: t A) (m: t A) (w x y z: elt)(v2 v3 v4 v5:A),
+z <> x -> z <> w -> y <> x -> y <> w ->  set w v2 (set x v3 (set y v4 (set z v5 m))) = set y v4 ( set z v5  (set w v2 (set x v3 m))).
+intros. 
+apply functional_extensionality.
+intros.
+unfold set.
+destruct (X.eq x0 w), (X.eq x0, x), (X.eq x0, y), (X.eq x0, z); try reflexivity; try contradiction.
+subst. unfold not in H, H0, H1, H2. 
+destruct (X.eq w y). symmetry in e. apply H2 in e. contradiction. 
+destruct (X.eq w z). symmetry in e. apply H0 in e. contradiction. 
+reflexivity.
+
+unfold not in H, H0, H1, H2.
+destruct (X.eq x0 y). subst. destruct (X.eq y x). apply H1 in e2. contradiction. reflexivity.
+destruct (X.eq x0 z). subst. destruct (X.eq z x). apply H in e2. contradiction. reflexivity.
+destruct (X.eq x0 x). subst. reflexivity. reflexivity.
+Qed.
+
+  
 
 Theorem gscsc_1of5:
   forall(A: Type) (m: t A) (q w x y z: elt)(v1 v2 v3 v4 v5:A),
@@ -1529,7 +1548,31 @@ Theorem gscsc_1of5:
     rewrite gscsc; auto. apply EMap.writes_eq. rewrite gscsc; auto. apply EMap.writes_eq. rewrite gscsc; auto. 
     Qed.
 
+
+    Theorem gscsc_2of5: forall(A: Type)(m: t A) (m: t A) (q w x y z: elt)(v1 v2 v3 v4 v5:A),
+    x <> q -> x <> w -> y <> q -> y <> w -> z <> q -> z <> w ->  set q v1 (set w v2 (set x v3 (set y v4 (set z v5 m)))) = set x v3 (set y v4 ( set z v5 (set q v1 (set w v2 m)))).
+    intros. 
+    apply functional_extensionality.
+    intros.
+    unfold set.
+    destruct (X.eq x0 q), (X.eq x0 w), (X.eq x0, x), (X.eq x0, y), (X.eq x0, z); try reflexivity; try contradiction.
+    subst. unfold not in H, H1, H3. 
+    destruct (X.eq w x). symmetry in e. apply H in e. contradiction. 
+    destruct (X.eq w y). symmetry in e. apply H1 in e. contradiction.
+    destruct (X.eq w z). symmetry in e. apply H3 in e. contradiction. reflexivity.
+  
+
+    destruct (X.eq x0 x). unfold not in H, H1, H3. rewrite e3 in e. apply H in e. contradiction.
+    destruct (X.eq x0 y). unfold not in H, H1, H3. rewrite e3 in e. apply H1 in e. contradiction.
+    destruct (X.eq x0 z). unfold not in H, H1, H3. rewrite e3 in e. apply H3 in e. contradiction. reflexivity.
+
+    destruct (X.eq x0 x). unfold not in H, H1, H0, H3. rewrite e3 in e. apply H0 in e. contradiction.
+    destruct (X.eq x0 y). unfold not in H, H1, H2, H3. rewrite e3 in e. apply H2 in e. contradiction.
+    destruct (X.eq x0 z). unfold not in H, H0, H1, H3, H4. rewrite e3 in e. apply H4 in e. contradiction. reflexivity.
+    Qed.
+
 End EMap.
+
 
 
 (** * A partial implementation of trees over any type that injects into type [positive] *)
