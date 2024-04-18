@@ -156,6 +156,12 @@ Proof.
   right; red; intro. exploit range_disjoint; eauto. intuition.
 Qed.
 
+Lemma disjoint_id:
+  forall i, ~empty i -> ~(disjoint i i).
+Proof.
+  unfold disjoint; intros. unfold empty in H. destruct i. simpl in H. unfold In. simpl. unfold not. intros. specialize (H0 z). intuition.
+Qed.
+
 (** * Shifting an interval by some amount *)
 
 Definition shift (i: interv) (delta: Z) : interv := (fst i + delta, snd i + delta).

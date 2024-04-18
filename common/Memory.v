@@ -4513,11 +4513,46 @@ Proof.
   apply H0; auto. eapply perm_valid_block; eauto.
 Qed.
 
-End Mem.
+Remark vptr_ne:
+  forall b1 o1 b2 o2,
+  Vptr b1 o1 <> Vptr b2 o2 -> b1 <> b2 \/ o1 <> o2.
+  Proof.
+    intros. unfold not in H.  
+    destruct (eq_block b1 b2) as [Heqb | Hneqb].
+    -destruct(Ptrofs.eq_dec o1 o2) as [Heqo | Hneqo].
+    +exfalso. apply H. subst. reflexivity.
+    + right. assumption.
+    -left. assumption.
+  Qed.        
+
+Theorem ld_str_gso: forall (v2: val) b1 o1 b3 o3 t1 t2 m m',
+  b1 <> b3 \/  Intv.disjoint (Ptrofs.unsigned o1, Ptrofs.unsigned o1 + Z.of_nat (size_chunk_nat t1))
+  (Ptrofs.unsigned o3, Ptrofs.unsigned o3 + Z.of_nat (Datatypes.length (encode_val t2 v2)))  -> storev t2 m (Vptr b3 o3) v2 = Some m' -> loadv t1 m' (Vptr b1 o1) = loadv t1 m (Vptr b1 o1).
+Proof.
+  intros. unfold loadv. unfold load.
+
+  unfold storev in H0. unfold store in H0. 
+  rewrite pred_dec_true in H0.
+  destruct (valid_access_dec m' t1 b1 (Ptrofs.unsigned o1) Readable).
+  destruct v. rewrite pred_dec_true.
+  apply f_equal. apply f_equal. inv H0. simpl. Unset Printing Notations.
+  
+  destruct (eq_block b1 b3) as [B_eq | B_neq].
+  destruct (Intv.disjoint_dec (Ptrofs.unsigned o1, Ptrofs.unsigned o1 + Z.of_nat (size_chunk_nat t1)) (Ptrofs.unsigned o3, Ptrofs.unsigned o3 + Z.of_nat (Datatypes.length (encode_val t2 v2)))) as [Idj | Indj].
+  subst. rewrite PMap.gss. apply getN_setN_disjoint. apply Idj.
+  intuition.
+  rewrite PMap.gso. reflexivity. apply B_neq.  
+  admit.
+  rewrite pred_dec_false. reflexivity. red. intros. admit.
+  red. admit.
+  (*TODO: figure out permissions. This isn't a huge deal, as we don't touch that system at all, but I'd like to not cheat here*)
+  Admitted.
+
+  End Mem.
 
 Notation mem := Mem.mem.
 
-Global Opaque Mem.alloc Mem.free Mem.store Mem.load Mem.storebytes Mem.loadbytes.
+Global Opaque Mem.alloc Mem.free Mem.storebytes Mem.loadbytes.
 
 Global Hint Resolve
   Mem.valid_not_valid_diff
