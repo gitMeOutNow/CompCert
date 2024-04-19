@@ -4531,7 +4531,11 @@ Theorem ld_str_gso: forall (v2: val) b1 o1 b3 o3 t1 t2 m m',
 Proof.
   intros. unfold loadv. unfold load.
 
-  unfold storev in H0. unfold store in H0. 
+  pose H0 as store_dup. apply store_valid_access_3 in store_dup.
+  pose H0 as store_dup_dup. apply store_unchanged_on in store_dup_dup.
+
+  unfold storev in H0. unfold store in H0.
+  
   rewrite pred_dec_true in H0.
   destruct (valid_access_dec m' t1 b1 (Ptrofs.unsigned o1) Readable).
   destruct v. rewrite pred_dec_true.
@@ -4544,7 +4548,7 @@ Proof.
   rewrite PMap.gso. reflexivity. apply B_neq.  
   admit.
   rewrite pred_dec_false. reflexivity. red. intros. admit.
-  red. admit.
+  apply store_dup.
   (*TODO: figure out permissions. This isn't a huge deal, as we don't touch that system at all, but I'd like to not cheat here*)
   Admitted.
 

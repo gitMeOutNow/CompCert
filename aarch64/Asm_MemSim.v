@@ -11,7 +11,6 @@
 (* *********************************************************************)
 
 (** Abstract syntax and semantics for AArch64 assembly language *)
-
 Require Import Coqlib Zbits Maps.
 Require Import AST Integers Floats.
 Require Import Values Memory Events Globalenvs Smallstep.
@@ -74,12 +73,12 @@ End TrxEq.
 
 Module Trmap := EMap(TrxEq).
 
-Definition early_write_id: Type := (processor_id * val) % type.
+Definition early_write_id: Type := (processor_id * val * memory_chunk) % type.
 
 Remark ew_eq:
   forall (r1 r2: early_write_id), {r1 = r2} + {r1 <> r2}.
 Proof.
-    intros. decide equality. apply Val.eq. apply Z.eq_dec. 
+    intros. decide equality. apply chunk_eq. decide equality. apply Val.eq. apply Z.eq_dec. 
 Qed.
 
 Module EWEq.
@@ -89,12 +88,12 @@ End EWEq.
 
 Module EWmap := EMap(EWEq).
 
-(* (Unenforced) convention: for writes, the first val is the ptr to the memory address, the second val is the value that is to be written*)
+(* (Unenforced) convention: for writes, the first val is the ptr to the memory address, the second val is the value that is to be written, and the third val is the memory chunk*)
 (*second val is initially arbitrary for reads, but later is serialized*)
-Definition in_flight_mem_ops := Trmap.t (option (val* val) % type).
+Definition in_flight_mem_ops := Trmap.t (option (val* val * memory_chunk) % type).
 
 (* map of (process id, val (unenforced convention: Vptr)) to value. Used to determine if that processor has a more recent early acked write than is serialized in mem*)
-Definition early_ack_writes := EWmap.t (option val).
+Definition early_ack_writes := EWmap.t (option (val)).
 
 
 
@@ -253,9 +252,9 @@ Inductive instruction: Type :=
   | Pincpc (pid: processor_id) (** my own thing, represents incrementing PC*)
   | Memfence (pid: processor_id) (** memory fence *)
   | EarlyAck (txid: mem_transaction_id) (pid: processor_id) (** Early write acknowledgement*)
-  | WriteRequest (txid: mem_transaction_id) (pid: processor_id) (a: addressing) (r: preg) (** Serialize a transaction in memory*)
+  | WriteRequest (txid: mem_transaction_id) (pid: processor_id) (a: addressing) (r: preg) (c: memory_chunk) (** Serialize a transaction in memory*)
   | WriteAck (txid: mem_transaction_id) (pid: processor_id) (* Acknowledges memory serialization*)
-  | ReadRequest (txid: mem_transaction_id) (pid: processor_id) (a: addressing) (* Requests value from memory*)
+  | ReadRequest (txid: mem_transaction_id) (pid: processor_id) (a: addressing) (c: memory_chunk)(* Requests value from memory*)
   | ReadAck (r:preg)(txid: mem_transaction_id) (pid: processor_id).
 
 
@@ -368,20 +367,20 @@ Definition eval_addressing (a: addressing) (ars: allregsets) (pid: processor_id)
   | ADpostincr base n => Vundef (* not modeled yet *)
   end.
 
-Definition read_request (a: addressing) (txid: mem_transaction_id)(ars: allregsets)(pid:processor_id)(ifmo: in_flight_mem_ops): in_flight_mem_ops :=
-    Trmap.set txid (Some (eval_addressing a ars pid, Vundef)) ifmo.
+Definition read_request (a: addressing) (txid: mem_transaction_id)(ars: allregsets)(pid:processor_id)(ifmo: in_flight_mem_ops)(c: memory_chunk): in_flight_mem_ops :=
+    Trmap.set txid (Some (eval_addressing a ars pid, Vundef, c)) ifmo.
 
 (*represents the moment the fetched value is determined*)
-Definition serialize_read (chunk: memory_chunk) (transf: val -> val) (txid: mem_transaction_id)
+Definition serialize_read (transf: val -> val) (txid: mem_transaction_id)
   (ars: allregsets) (pid: processor_id) (m: mem) (ifmo: in_flight_mem_ops) (eaw: early_ack_writes): outcome  :=
     (*Check if anything is in early write*)
     match ifmo txid with 
-        | Some (address, _) => match eaw (pid, address) with 
-            | Some v =>  MemSimNext ars m (Trmap.set txid (Some (address, (transf v))) ifmo) eaw
+        | Some (address, _, chunk) => match eaw (pid, address, chunk) with 
+            | Some v =>  MemSimNext ars m (Trmap.set txid (Some (address, (transf v), chunk)) ifmo) eaw
             (*If not, read from main memory*)
             | None => match Mem.loadv chunk m address with
                 | None => MemSimStuck
-                | Some v => MemSimNext ars m (Trmap.set txid (Some (address, (transf v))) ifmo) eaw
+                | Some v => MemSimNext ars m (Trmap.set txid (Some (address, (transf v), chunk)) ifmo) eaw
                 end
         end
         | None => MemSimStuck
@@ -390,30 +389,30 @@ Definition serialize_read (chunk: memory_chunk) (transf: val -> val) (txid: mem_
 (*Writes fetched value into register*)
 Definition read_ack (txid: mem_transaction_id) (ars:allregsets)(m:mem) (pid:processor_id) (eaw: early_ack_writes) (r: preg) (ifmo: in_flight_mem_ops) : outcome :=
     match ifmo txid with
-    | Some (address, v) => MemSimNext (ars@(pid, r) <- v) m (Trmap.set txid None ifmo) eaw
+    | Some (address, v, chunk) => MemSimNext (ars@(pid, r) <- v) m (Trmap.set txid None ifmo) eaw
     | None => MemSimStuck
     end.
 
 Definition early_ack_write (txid: mem_transaction_id) (pid:processor_id) (eaw: early_ack_writes)(ifmo: in_flight_mem_ops) : early_ack_writes :=
     match ifmo txid with
-    | Some (address, value) => EWmap.set (pid, address) (Some value) eaw
+    | Some (address, value, chunk) => EWmap.set (pid, address, chunk) (Some value) eaw
     | None => eaw (* Should not happen*)
     end.    
 
 Definition write_request  (a: addressing) (v: val) (txid: mem_transaction_id)
-(ars: allregsets) (pid: processor_id) (ifmo: in_flight_mem_ops) : in_flight_mem_ops :=
-    Trmap.set txid (Some (eval_addressing a ars pid, v)) ifmo.     
+(ars: allregsets) (pid: processor_id) (ifmo: in_flight_mem_ops)(chunk: memory_chunk) : in_flight_mem_ops :=
+    Trmap.set txid (Some (eval_addressing a ars pid, v, chunk)) ifmo.     
 
 
 (*Used for write serialization*)
 (*Also removes early write acks*)
-Definition serialize_write (chunk: memory_chunk) 
+Definition serialize_write
     (txid: mem_transaction_id)
     (ars: allregsets) (pid: processor_id) (m: mem) (ifmo: in_flight_mem_ops) (eaw: early_ack_writes) :=
     match ifmo txid with
-    | Some (a, v) => match Mem.storev chunk m a v with
+    | Some (a, v, c) => match Mem.storev c m a v with
         | None => MemSimStuck
-        | Some m' => MemSimNext ars m' ifmo (EWmap.set (pid,a) None eaw)
+        | Some m' => MemSimNext ars m' ifmo (EWmap.set (pid,a, c) None eaw)
         end
     | None => MemSimStuck
 end.
@@ -507,45 +506,45 @@ Definition eval_memsim_instr_internal (f: function)(i: instruction)(ars: allregs
             end
         (** Memory loads and stores *)
         | Pldrw pid txid =>
-            serialize_read Mint32 (fun v => v) txid ars pid m ifo eaw
+            serialize_read (fun v => v) txid ars pid m ifo eaw
         | Pldrw_a pid txid =>
-            serialize_read Many32 (fun v => v) txid ars pid m ifo eaw
+            serialize_read (fun v => v) txid ars pid m ifo eaw
         | Pldrx pid txid =>
-            serialize_read Mint64 (fun v => v) txid ars pid m ifo eaw
+            serialize_read (fun v => v) txid ars pid m ifo eaw
         | Pldrx_a pid txid =>
-            serialize_read Many64 (fun v => v) txid ars pid m ifo eaw
+            serialize_read (fun v => v) txid ars pid m ifo eaw
         | Pldrb W pid txid =>
-            serialize_read Mint8unsigned (fun v => v) txid ars pid m ifo eaw
+            serialize_read (fun v => v) txid ars pid m ifo eaw
         | Pldrb X pid txid =>
-            serialize_read Mint8unsigned Val.longofintu txid ars pid m ifo eaw
+            serialize_read Val.longofintu txid ars pid m ifo eaw
         | Pldrsb W pid txid =>
-            serialize_read Mint8signed (fun v => v) txid ars pid m ifo eaw
+            serialize_read (fun v => v) txid ars pid m ifo eaw
         | Pldrsb X pid txid =>
-            serialize_read Mint8signed Val.longofint txid ars pid m ifo eaw
+            serialize_read Val.longofint txid ars pid m ifo eaw
         | Pldrh W pid txid =>
-            serialize_read Mint16unsigned (fun v => v) txid ars pid m ifo eaw
+            serialize_read (fun v => v) txid ars pid m ifo eaw
         | Pldrh X pid txid =>
-            serialize_read Mint16unsigned (Val.longofintu) txid ars pid m ifo eaw
+            serialize_read (Val.longofintu) txid ars pid m ifo eaw
         | Pldrsh W pid txid =>
-            serialize_read Mint16signed (fun v => v) txid ars pid m ifo eaw
+            serialize_read (fun v => v) txid ars pid m ifo eaw
         | Pldrsh X pid txid =>
-            serialize_read Mint16signed (Val.longofint) txid ars pid m ifo eaw
+            serialize_read (Val.longofint) txid ars pid m ifo eaw
         | Pldrzw pid txid =>
-            serialize_read Mint32 (Val.longofintu) txid ars pid m ifo eaw
+            serialize_read (Val.longofintu) txid ars pid m ifo eaw
         | Pldrsw pid txid =>
-            serialize_read Mint32 (Val.longofint) txid ars pid m ifo eaw
+            serialize_read (Val.longofint) txid ars pid m ifo eaw
         | Pstrw a pid txid =>
-            serialize_write Mint32 txid ars pid m ifo eaw
+            serialize_write txid ars pid m ifo eaw
         | Pstrw_a a pid txid =>
-            serialize_write Many32 txid ars pid m ifo eaw
+            serialize_write txid ars pid m ifo eaw
         | Pstrx a pid txid =>
-            serialize_write Mint64 txid ars pid m ifo eaw
+            serialize_write txid ars pid m ifo eaw
         | Pstrx_a a pid txid =>
-            serialize_write Many64 txid ars pid m ifo eaw
+            serialize_write txid ars pid m ifo eaw
         | Pstrb a pid txid =>
-            serialize_write Mint8unsigned txid ars pid m ifo eaw
+            serialize_write txid ars pid m ifo eaw
         | Pstrh a pid txid =>
-            serialize_write Mint16unsigned txid ars pid m ifo eaw
+            serialize_write txid ars pid m ifo eaw
         (** Integer arithmetic, immediate *)
         | Paddimm W rd r1 n pid =>
             MemSimNext ((ars@ (pid, rd)  <- (Val.add ars@ (pid, r1)  (Vint (Int.repr n))))) m ifo eaw
@@ -730,17 +729,17 @@ Definition eval_memsim_instr_internal (f: function)(i: instruction)(ars: allregs
             MemSimNext ((ars@ (pid, rd)  <- (Val.maketotal (Val.divlu ars@ (pid, r1)  ars@ (pid, r2) )))) m ifo eaw
         (** Floating-point loads and stores *)
         | Pldrs pid txid =>
-            serialize_read Mfloat32 (fun v => v) txid ars pid m ifo eaw
+            serialize_read (fun v => v) txid ars pid m ifo eaw
         | Pldrd pid txid =>
-            serialize_read Mfloat64 (fun v => v) txid ars pid m ifo eaw
+            serialize_read (fun v => v) txid ars pid m ifo eaw
         | Pldrd_a pid txid =>
-            serialize_read Many64 (fun v => v) txid ars pid m ifo eaw
+            serialize_read (fun v => v) txid ars pid m ifo eaw
         | Pstrs a pid txid =>
-            serialize_write Mfloat32 txid ars pid m ifo eaw
+            serialize_write txid ars pid m ifo eaw
         | Pstrd a pid txid =>
-            serialize_write Mfloat64 txid ars pid m ifo eaw
+            serialize_write txid ars pid m ifo eaw
         | Pstrd_a a pid txid =>
-            serialize_write Many64 txid ars pid m ifo eaw
+            serialize_write txid ars pid m ifo eaw
         (** Floating-point move *)
         | Pfmov rd r1 pid =>
             MemSimNext ((ars@ (pid, rd)  <- (ars@ (pid, r1) ))) m  ifo eaw
@@ -902,12 +901,12 @@ Definition eval_memsim_instr_internal (f: function)(i: instruction)(ars: allregs
         | Memfence _ => MemSimNext ars m ifo eaw
         | EarlyAck txid pid =>
             MemSimNext ars m ifo (early_ack_write txid pid eaw ifo)
-        | WriteRequest txid pid a r =>
-            MemSimNext ars m (Trmap.set txid (Some (eval_addressing a ars pid, ars@ (pid, r))) ifo ) eaw
+        | WriteRequest txid pid a r c =>
+            MemSimNext ars m (Trmap.set txid (Some (eval_addressing a ars pid, ars@ (pid, r), c)) ifo ) eaw
         | WriteAck txid pid =>
             MemSimNext ars m (write_ack txid pid ifo) eaw
-        | ReadRequest txid pid a =>
-            MemSimNext ars m (read_request a txid ars pid ifo) eaw
+        | ReadRequest txid pid a c =>
+            MemSimNext ars m (read_request a txid ars pid ifo c) eaw
         | ReadAck r txid pid =>
             read_ack txid ars m pid eaw r ifo
     end.
@@ -933,15 +932,15 @@ dont update the PC in every operation*)
 
 Definition translate_write(asm_i: Asm.instruction)(pid: processor_id)(txid: mem_transaction_id): list instruction :=
     match asm_i with 
-    | Asm.Pstrd_a r a => ([WriteRequest txid pid a r; Pstrd_a a pid txid; WriteAck txid pid; Pincpc pid])                               (**r store float64 *)
-    | Asm.Pstrd r a => ([WriteRequest txid pid a r; Pstrd a pid txid; WriteAck txid pid; Pincpc pid])                               (**r store float64 *)
-    | Asm.Pstrw r a => ([WriteRequest txid pid a r; Pstrw a pid txid; WriteAck txid pid; Pincpc pid ])                               (**r store int32 *)
-    | Asm.Pstrw_a r a => ([WriteRequest txid pid a r; Pstrw_a a pid txid; WriteAck txid pid; Pincpc pid] )                            (**r store int32 as any32 *)
-    | Asm.Pstrx r a => ([WriteRequest txid pid a r; Pstrx a pid txid;  WriteAck txid pid; Pincpc pid] )                                (**r store int64 *)
-    | Asm.Pstrx_a r a => ([WriteRequest txid pid a r; Pstrx_a a pid txid;  WriteAck txid pid; Pincpc pid ])                             (**r store int64 as any64 *)
-    | Asm.Pstrb r a => ([WriteRequest txid pid a r; Pstrb a pid txid;  WriteAck txid pid; Pincpc pid ])                                  (**r store int8 *)
-    | Asm.Pstrh r a => ([WriteRequest txid pid a r; Pstrh a pid txid;  WriteAck txid pid; Pincpc pid])                                (**r store int16 *)
-    | Asm.Pstrs r a => ([WriteRequest txid pid a r; Pstrs a pid txid;  WriteAck txid pid; Pincpc pid]) 
+    | Asm.Pstrd_a r a => ([WriteRequest txid pid a r Many64; Pstrd_a a pid txid; WriteAck txid pid; Pincpc pid])                               (**r store float64 *)
+    | Asm.Pstrd r a => ([WriteRequest txid pid a r Mfloat64; Pstrd a pid txid; WriteAck txid pid; Pincpc pid])                               (**r store float64 *)
+    | Asm.Pstrw r a => ([WriteRequest txid pid a r Mint32; Pstrw a pid txid; WriteAck txid pid; Pincpc pid ])                               (**r store int32 *)
+    | Asm.Pstrw_a r a => ([WriteRequest txid pid a r Many32; Pstrw_a a pid txid; WriteAck txid pid; Pincpc pid] )                            (**r store int32 as any32 *)
+    | Asm.Pstrx r a => ([WriteRequest txid pid a r Mint64; Pstrx a pid txid;  WriteAck txid pid; Pincpc pid] )                                (**r store int64 *)
+    | Asm.Pstrx_a r a => ([WriteRequest txid pid a r Many64; Pstrx_a a pid txid;  WriteAck txid pid; Pincpc pid ])                             (**r store int64 as any64 *)
+    | Asm.Pstrb r a => ([WriteRequest txid pid a r Mint8unsigned; Pstrb a pid txid;  WriteAck txid pid; Pincpc pid ])                                  (**r store int8 *)
+    | Asm.Pstrh r a => ([WriteRequest txid pid a r Mint16unsigned; Pstrh a pid txid;  WriteAck txid pid; Pincpc pid])                                (**r store int16 *)
+    | Asm.Pstrs r a => ([WriteRequest txid pid a r Mfloat32; Pstrs a pid txid;  WriteAck txid pid; Pincpc pid]) 
     | _ => []
     end.
 
@@ -960,16 +959,16 @@ Definition asm_to_memsim (asm_i: Asm.instruction) (pid: processor_id)(txid: mem_
     | Asm.Pcbz sz r lbl => ([Pcbz sz r lbl pid; Pincpc pid])                         (**r branch if zero *)
     | Asm.Ptbnz sz r n lbl => ([Ptbnz sz r n lbl pid; Pincpc pid])                   (**r branch if bit n is not zero *)
     | Asm.Ptbz sz r n lbl => ([Ptbz sz r n lbl pid; Pincpc pid])                     (**r branch if bit n is zero *)
-    | Asm.Pldrw rd a => ([ReadRequest txid pid a; Pldrw pid txid; ReadAck rd txid pid; Pincpc pid])                               (**r load int32 *)
-    | Asm.Pldrw_a rd a => ([ReadRequest txid pid a; Pldrw_a pid txid; ReadAck rd txid pid; Pincpc pid])                           (**r load int32 as any32 *)
-    | Asm.Pldrx rd a => ([ReadRequest txid pid a; Pldrx pid txid; ReadAck rd txid pid; Pincpc pid])                               (**r load int64 *)
-    | Asm.Pldrx_a rd a => ([ReadRequest txid pid a; Pldrx_a pid txid; ReadAck rd txid pid; Pincpc pid])                           (**r load int64 as any64 *)
-    | Asm.Pldrb sz rd a => ([ReadRequest txid pid a; Pldrb sz pid txid; ReadAck rd txid pid; Pincpc pid])                         (**r load int8, zero-extend *)
-    | Asm.Pldrsb sz rd a => ([ReadRequest txid pid a; Pldrsb sz pid txid; ReadAck rd txid pid; Pincpc pid])                       (**r load int8, sign-extend *)
-    | Asm.Pldrh sz rd a => ([ReadRequest txid pid a; Pldrh sz pid txid; ReadAck rd txid pid; Pincpc pid])                         (**r load int16, zero-extend *)
-    | Asm.Pldrsh sz rd a => ([ReadRequest txid pid a; Pldrsh sz pid txid; ReadAck rd txid pid; Pincpc pid])                       (**r load int16, sign-extend *)
-    | Asm.Pldrzw rd a => ([ReadRequest txid pid a; Pldrzw pid txid; ReadAck rd txid pid; Pincpc pid])                             (**r load int32, zero-extend to int64 *)
-    | Asm.Pldrsw rd a => ([ReadRequest txid pid a; Pldrsw pid txid; ReadAck rd txid pid; Pincpc pid])                             (**r load int32, sign-extend to int64 *)
+    | Asm.Pldrw rd a => ([ReadRequest txid pid a Mint32; Pldrw pid txid; ReadAck rd txid pid; Pincpc pid])                               (**r load int32 *)
+    | Asm.Pldrw_a rd a => ([ReadRequest txid pid a Many32; Pldrw_a pid txid; ReadAck rd txid pid; Pincpc pid])                           (**r load int32 as any32 *)
+    | Asm.Pldrx rd a => ([ReadRequest txid pid a Mint64; Pldrx pid txid; ReadAck rd txid pid; Pincpc pid])                               (**r load int64 *)
+    | Asm.Pldrx_a rd a => ([ReadRequest txid pid a Many64; Pldrx_a pid txid; ReadAck rd txid pid; Pincpc pid])                           (**r load int64 as any64 *)
+    | Asm.Pldrb sz rd a => ([ReadRequest txid pid a Mint8unsigned; Pldrb sz pid txid; ReadAck rd txid pid; Pincpc pid])                         (**r load int8, zero-extend *)
+    | Asm.Pldrsb sz rd a => ([ReadRequest txid pid a Mint8signed; Pldrsb sz pid txid; ReadAck rd txid pid; Pincpc pid])                       (**r load int8, sign-extend *)
+    | Asm.Pldrh sz rd a => ([ReadRequest txid pid a Mint16unsigned; Pldrh sz pid txid; ReadAck rd txid pid; Pincpc pid])                         (**r load int16, zero-extend *)
+    | Asm.Pldrsh sz rd a => ([ReadRequest txid pid a Mint16signed; Pldrsh sz pid txid; ReadAck rd txid pid; Pincpc pid])                       (**r load int16, sign-extend *)
+    | Asm.Pldrzw rd a => ([ReadRequest txid pid a Mint32; Pldrzw pid txid; ReadAck rd txid pid; Pincpc pid])                             (**r load int32, zero-extend to int64 *)
+    | Asm.Pldrsw rd a => ([ReadRequest txid pid a Mint32; Pldrsw pid txid; ReadAck rd txid pid; Pincpc pid])                             (**r load int32, sign-extend to int64 *)
     | Asm.Pldp rd1 rd2 a => ([Pldp rd1 rd2 pid txid])                        (**r load two int64 - not generated by compcert*)
     | Asm.Pstrw rs a => translate_write asm_i pid txid                             (**r store int32 *)
     | Asm.Pstrw_a rs a => translate_write asm_i pid txid                         (**r store int32 as any32 *)
@@ -1028,9 +1027,9 @@ Definition asm_to_memsim (asm_i: Asm.instruction) (pid: processor_id)(txid: mem_
     | Asm.Pumulh rd r1 r2 => ([Pumulh rd r1 r2 pid; Pincpc pid])
     | Asm.Psdiv sz rd r1 r2 => ([Psdiv sz rd r1 r2 pid; Pincpc pid])
     | Asm.Pudiv sz rd r1 r2 => ([Pudiv sz rd r1 r2 pid; Pincpc pid])
-    | Asm.Pldrs rd a => ([ReadRequest txid pid a; Pldrs pid txid; ReadAck rd txid pid; Pincpc pid])                           (**r Floating-point loads and stores *)
-    | Asm.Pldrd rd a =>  ([ReadRequest txid pid a; Pldrd pid txid; ReadAck rd txid pid; Pincpc pid])
-    | Asm.Pldrd_a rd a =>  ([ReadRequest txid pid a; Pldrd_a pid txid; ReadAck rd txid pid; Pincpc pid])
+    | Asm.Pldrs rd a => ([ReadRequest txid pid a Mfloat32; Pldrs pid txid; ReadAck rd txid pid; Pincpc pid])                           (**r Floating-point loads and stores *)
+    | Asm.Pldrd rd a =>  ([ReadRequest txid pid a Mfloat64; Pldrd pid txid; ReadAck rd txid pid; Pincpc pid])
+    | Asm.Pldrd_a rd a =>  ([ReadRequest txid pid a Many64; Pldrd_a pid txid; ReadAck rd txid pid; Pincpc pid])
     | Asm.Pstrs rs a => translate_write asm_i pid txid                           (**r store single-precision float *)
     | Asm.Pstrd rs a => translate_write asm_i pid txid 
     | Asm.Pstrd_a rs a => translate_write asm_i pid txid 
@@ -1228,8 +1227,8 @@ Proof.
 intros. unfold Trmap.set. destruct TrxEq.eq. reflexivity. contradiction.
 Qed.
 
-Remark eaw_map_transitive: forall (v: val) (a: val) (eaw: early_ack_writes) (pid: processor_id),  
-(EWmap.set (pid, a) (Some v) eaw)(pid, a) = Some v.
+Remark eaw_map_transitive: forall (v: val) (a: val) (eaw: early_ack_writes) (pid: processor_id) (c: memory_chunk),  
+(EWmap.set (pid, a, c) (Some v) eaw)(pid, a, c) = Some v.
 Proof.
 intros. unfold EWmap.set. destruct EWEq.eq. reflexivity. contradiction.
 Qed.
@@ -1301,7 +1300,7 @@ Ltac temp_solver :=
     end.
 
  Definition no_early_acks (eaw: early_ack_writes)(pid: processor_id): Prop :=
-    forall a, eaw (pid, a) = None.
+    forall a c, eaw (pid, a, c) = None.
 
 Theorem asm_identical_to_forward_sim: forall (pr: preg) (g: genv)(f: function) (i: Asm.instruction) (rs: regset) (ars: allregsets) (m: mem) (pid: processor_id) (ifm: in_flight_mem_ops) (eaw: early_ack_writes), 
     no_early_acks eaw pid -> regs_identical ars pid rs -> end_state_equals_asm_memsim pr (exec_instr g f i rs  m)  (eval_memsim_chain g f (asm_to_memsim i pid 0) ars m ifm eaw) pid .
@@ -1345,10 +1344,8 @@ Inductive data_resource: Type :=
 Definition data_res_eq (d1 d2: data_resource): Prop :=
     match d1, d2 with
     | SingleReg p1 r1, SingleReg p2 r2 => p1 = p2 /\ r1 = r2
-    | SingleMemAddr c1 (Vptr b1 ofs1), SingleMemAddr c2 (Vptr b2 ofs2) => b1 = b2 /\  ~Intv.disjoint (Ptrofs.unsigned (ofs1), Ptrofs.unsigned ofs1 + Z.of_nat (Memdata.size_chunk_nat c1))
-                                                                (Ptrofs.unsigned ofs2, Ptrofs.unsigned ofs2 + Z.of_nat (Memdata.size_chunk_nat c2)) 
+    | SingleMemAddr c1 v1, SingleMemAddr c2 v2 => c1 = c2 /\ v1 = v2
     | TransactionId t1, TransactionId t2 => t1 = t2
-    | SingleMemAddr _ _, SingleMemAddr _ _ => True (*Corrupted single mem address that does not store vptr*)
     | _, _ => False
     end.
 
@@ -1361,10 +1358,7 @@ Definition iregz_same_resource (r: ireg0) (pid: processor_id)(dr: data_resource)
     
 Remark data_res_isomorphism: forall r, data_res_eq r r.
 Proof.
-    intros. destruct r. unfold data_res_eq. split; reflexivity.
-    unfold data_res_eq. destruct v; try reflexivity. split. reflexivity.  
-    apply Intv.disjoint_id. unfold Intv.empty. simpl. destruct (m); simpl; intuition.
-    unfold data_res_eq. reflexivity.  
+    intros. destruct r; unfold data_res_eq; try split; reflexivity.
 Qed.
 
 Lemma symb_data_eq: forall (x y: data_resource), {x=y} + {x<>y}.
@@ -1385,10 +1379,17 @@ Definition data_address_src (pid: processor_id)(a: addressing) (d: data_resource
 
 
 
+Definition memory_conflict(c1 c2: memory_chunk)(a1 a2: val): Prop :=
+    match a1, a2 with
+    | Vptr b1 ofs1, Vptr b2 ofs2 => b1 = b2 /\ ~Intv.disjoint (Ptrofs.unsigned (ofs1), Ptrofs.unsigned ofs1 + Z.of_nat (Memdata.size_chunk_nat c1))
+        (Ptrofs.unsigned ofs2, Ptrofs.unsigned ofs2 + Z.of_nat (Memdata.size_chunk_nat c2)) 
+    | _, _ => True
+    end.
+
  (* Check if data resource d is overwritten by a. Requires checking the evaluated expr*)
- Definition data_address_sink (a: addressing)(g: genv) (ars: allregsets) (pid: processor_id) (d: data_resource) : Prop := 
+ Definition data_address_sink (c: memory_chunk)(a: addressing)(g: genv) (ars: allregsets) (pid: processor_id) (d: data_resource) : Prop := 
     match d with
-    | SingleMemAddr c val => eval_addressing g a ars pid  = val
+        | SingleMemAddr c' b => memory_conflict c c' (eval_addressing g a ars pid) b 
     | _ => False
     end.
 
@@ -1408,7 +1409,7 @@ Definition data_source(i: instruction) (dr: data_resource): Prop :=
    | Ptbnz sz r n lbl   pid => data_res_eq (SingleReg pid r) dr               (**r branch if bit n is not zero *)
    | Ptbz sz r n lbl pid => data_res_eq (SingleReg pid r) dr                  (**r branch if bit n is zero *)
    (** Memory loads and stores *)
-   | Pldrw pid txid =>  data_res_eq (TransactionId txid) dr                            (**r load int32 *)
+   | Pldrw pid txid =>  data_res_eq (TransactionId txid) dr                          (**r load int32 *)
    | Pldrw_a pid txid =>  data_res_eq (TransactionId txid) dr                                (**r load int32 as any32 *)
    | Pldrx pid txid =>  data_res_eq (TransactionId txid) dr                                 (**r load int64 *)
    | Pldrx_a pid txid =>  data_res_eq (TransactionId txid) dr                                (**r load int64 as any64 *)
@@ -1553,8 +1554,8 @@ Definition data_source(i: instruction) (dr: data_resource): Prop :=
                     | _ => False
                     end
     | EarlyAck txid pid => data_res_eq (TransactionId txid) dr
-    | WriteRequest txid pid a rd => data_address_src pid a dr \/ data_res_eq (SingleReg pid rd) dr \/ data_res_eq (TransactionId txid) dr
-    | ReadRequest txid pid a => data_address_src  pid a dr \/ data_res_eq (TransactionId txid) dr
+    | WriteRequest txid pid a rd c => data_address_src pid a dr \/ data_res_eq (SingleReg pid rd) dr \/ data_res_eq (TransactionId txid) dr
+    | ReadRequest txid pid a c => data_address_src  pid a dr \/ data_res_eq (TransactionId txid) dr
     | WriteAck txid pid => data_res_eq (TransactionId txid) dr
     | ReadAck r txid pid => data_res_eq (TransactionId txid) dr
     end.
@@ -1588,13 +1589,13 @@ Definition data_sink(i: instruction) (dr: data_resource) (g: genv) (ars: allregs
     | Pldrsw pid txid => data_res_eq (TransactionId txid) dr                                 (**r load int32, sign-extend to int64 *)
     | Pldp rd1 rd2 id txid => True (*not modeled by CompCErt*)                                (**r load two int64 *)
     (* explanation: check if r is a memory address and, if so, check if a stores in r. Can check by evaluating both??? *)
-    | Pstrw a pid txid => data_address_sink a g ars pid dr  \/ data_res_eq (TransactionId txid) dr                                   (**r store int32 *)
-    | Pstrw_a a pid txid => data_address_sink a g ars pid dr  \/ data_res_eq (TransactionId txid) dr                                    (**r store int32 as any32 *)
-    | Pstrx a pid txid => data_address_sink a g ars pid dr  \/ data_res_eq (TransactionId txid) dr                                     (**r store int64 *)
-    | Pstrx_a a pid txid => data_address_sink a g ars pid dr  \/ data_res_eq (TransactionId txid) dr                                   (**r store int64 as any64 *)
-    | Pstrb a pid txid => data_address_sink a g ars pid dr    \/ data_res_eq (TransactionId txid) dr                                  (**r store int8 *)
-    | Pstrh a pid txid => data_address_sink a g ars pid dr  \/ data_res_eq (TransactionId txid) dr                                     (**r store int16 *)
-    | Pstp a pid txid => data_address_sink a g ars pid dr   \/ data_res_eq (TransactionId txid) dr                                (**r store two int64 *)
+    | Pstrw a pid txid => data_address_sink Mint32 a g ars pid dr  \/ data_res_eq (TransactionId txid) dr                                   (**r store int32 *)
+    | Pstrw_a a pid txid => data_address_sink Many32 a g ars pid dr  \/ data_res_eq (TransactionId txid) dr                                    (**r store int32 as any32 *)
+    | Pstrx a pid txid => data_address_sink Mint64 a g ars pid dr  \/ data_res_eq (TransactionId txid) dr                                     (**r store int64 *)
+    | Pstrx_a a pid txid => data_address_sink Many64 a g ars pid dr  \/ data_res_eq (TransactionId txid) dr                                   (**r store int64 as any64 *)
+    | Pstrb a pid txid => data_address_sink Mint8unsigned a g ars pid dr    \/ data_res_eq (TransactionId txid) dr                                  (**r store int8 *)
+    | Pstrh a pid txid => data_address_sink Mint16unsigned a g ars pid dr  \/ data_res_eq (TransactionId txid) dr                                     (**r store int16 *)
+    | Pstp a pid txid => True (*Not generated by compcert*)                              (**r store two int64 *)
     (** Integer arithmetic, immediate *)
     | Paddimm sz rd r1 n  pid => data_res_eq (SingleReg pid (preg_of_iregsp rd)) dr           (**r addition *)
     | Psubimm sz rd r1 n pid => data_res_eq (SingleReg pid (preg_of_iregsp rd)) dr               (**r subtraction *)
@@ -1665,9 +1666,9 @@ Definition data_sink(i: instruction) (dr: data_resource) (g: genv) (ars: allregs
     | Pldrs pid txid =>  data_res_eq (TransactionId txid) dr                                     (**r load float32 (single precision) *)
     | Pldrd pid txid => data_res_eq (TransactionId txid) dr                                  (**r load float64 (double precision) *)
     | Pldrd_a pid txid =>  data_res_eq (TransactionId txid) dr                                 (**r load float64 as any64 *)
-    | Pstrs a pid txid => data_address_sink a g ars pid dr   \/ data_res_eq (TransactionId txid) dr                                  (**r store float32 *)
-    | Pstrd a pid txid =>  data_address_sink a g ars pid dr   \/ data_res_eq (TransactionId txid) dr                                (**r store float64 *)
-    | Pstrd_a a pid txid => data_address_sink a g ars pid dr  \/ data_res_eq (TransactionId txid) dr                              (**r store float64 as any64 *)
+    | Pstrs a pid txid => data_address_sink Mfloat32 a g ars pid dr   \/ data_res_eq (TransactionId txid) dr                                  (**r store float32 *)
+    | Pstrd a pid txid =>  data_address_sink Mfloat64 a g ars pid dr   \/ data_res_eq (TransactionId txid) dr                                (**r store float64 *)
+    | Pstrd_a a pid txid => data_address_sink Many64 a g ars pid dr  \/ data_res_eq (TransactionId txid) dr                              (**r store float64 as any64 *)
     (** Floating-point move *)
     | Pfmov rd r1 pid => data_res_eq (SingleReg pid rd) dr 
     | Pfmovimms rd f  pid => data_res_eq (SingleReg pid rd) dr \/ data_res_eq (SingleReg pid X16) dr                               (**r load float32 constant *)
@@ -1719,8 +1720,8 @@ Definition data_sink(i: instruction) (dr: data_resource) (g: genv) (ars: allregs
                     | _ => False
                     end
     | EarlyAck txid pid =>  data_res_eq (TransactionId txid) dr
-    | WriteRequest txid pid a rd =>  data_res_eq (TransactionId txid) dr
-    | ReadRequest txid pid a =>  data_res_eq (TransactionId txid) dr
+    | WriteRequest txid pid a rd c =>  data_res_eq (TransactionId txid) dr
+    | ReadRequest txid pid a c=>  data_res_eq (TransactionId txid) dr
     | WriteAck txid pid =>  data_res_eq (TransactionId txid) dr
     | ReadAck r txid pid => data_res_eq (SingleReg pid r) dr \/ data_res_eq (TransactionId txid) dr    
     end.
@@ -1864,14 +1865,70 @@ Definition output_data_eq (o1 o2: outcome): Prop :=
 Remark reduce_ors_1: ~(True \/ True) -> False.
 Proof. intuition. Qed.
 
-Definition input_code_race_free: Prop := forall (txid1 txid2: mem_transaction_id)(v1 v2 v3 v4: val)(ifmo: in_flight_mem_ops),
-    txid1 <> txid2 -> ifmo txid1 = (Some (v1, v3))  -> ifmo txid2 = (Some (v2, v4))  -> v1 <> v2.
+Definition input_code_race_free: Prop := forall (txid1 txid2: mem_transaction_id)(v1 v2 v3 v4: val)(ifmo: in_flight_mem_ops)(c1 c2: memory_chunk),
+    txid1 <> txid2 -> ifmo txid1 = (Some (v1, v3, c1))  -> ifmo txid2 = (Some (v2, v4, c2))  ->  ~(memory_conflict c1 c2 v1 v2).
 
 Remark reduce_ors_2: ~(True \/ False) -> False.
 Proof. intuition. Qed.
 
 Remark reduce_ors_3: ~(False \/ True) -> False.
 Proof. intuition. Qed.
+
+Remark mc_id: forall m1 v2, memory_conflict m1 m1 v2 v2.
+Proof.
+intros. unfold memory_conflict. destruct v2; try reflexivity. split. reflexivity. destruct m1;
+apply Intv.disjoint_id; unfold Intv.empty; simpl; intuition.
+Qed.
+
+
+Remark mem_ne: forall m1 v1 m2 v2 (pid1 pid2: processor_id),
+(~ memory_conflict m1 m2 v1 v2) -> (pid1, v1, m1) <> (pid2, v2, m2).
+Proof.
+intros. unfold not. intro. apply H. inv H0. apply mc_id.
+Qed.
+
+Definition is_vptr (v: val): Prop := match v with
+    | Vptr _ _ => True
+    | _ => False
+    end.
+
+Remark load_ptrs: forall (v1 v2: val) t m,
+    Mem.loadv t m v1 = Some v2 -> is_vptr v1.
+Proof.
+    intros. unfold Mem.loadv in H. destruct v1; try discriminate H. unfold is_vptr. reflexivity.
+Qed.
+
+Remark store_ptrs: forall (v1 v2: val) t m1 m2,
+    Mem.storev t m1 v1 v2 = Some m2 -> is_vptr v1.
+Proof.
+    intros. unfold Mem.storev in H. destruct v1; try discriminate H. unfold is_vptr. reflexivity.
+Qed.
+
+(* cool proof: decidability implies double negation*)
+Remark disjoint_nnp: forall a b c d, (~ ~ Intv.disjoint (a, b) (c, d)) -> Intv.disjoint (a, b)(c, d).
+Proof.
+intros.
+    destruct (Intv.disjoint_dec (a, b) (c, d)) as [HD | HnD].
+    - apply HD.
+    - contradiction H.
+Qed.
+
+Remark mem_chunk_length_sync: forall c v, Datatypes.length (encode_val c v) = size_chunk_nat c.
+Proof.
+    intros. destruct c; simpl; unfold encode_val; unfold size_chunk_nat; unfold size_chunk; destruct v; simpl; intuition.
+Qed.
+
+Remark expand_memory_conflict: forall (c1 c2: memory_chunk) (b1 b2: block) o1 o2 v,
+    ~memory_conflict c1 c2 (Vptr b1 o1) (Vptr b2 o2) -> 
+    b1 <> b2  \/ Intv.disjoint (Ptrofs.unsigned o1, Ptrofs.unsigned o1 + Z.of_nat (size_chunk_nat c1))
+        (Ptrofs.unsigned o2,
+        Ptrofs.unsigned o2 + Z.of_nat (Datatypes.length (encode_val c2 v))).
+Proof.
+intros. unfold memory_conflict in H. apply not_and_or in H. simpl in H. rewrite mem_chunk_length_sync.
+
+destruct H as [bNe | dNe]. left. assumption.
+right. apply disjoint_nnp. assumption.
+Qed.
 
 Remark output_data_eq_refl: forall o, output_data_eq o o.
 Proof.
@@ -1907,6 +1964,18 @@ Ltac reorder_solver :=
     | H_e: ~(exists r: data_resource, data_res_eq (TransactionId ?tid1) r /\ data_res_eq (TransactionId ?tid2) r) |- _ => apply different_transactions_different_resource in H_e; reorder_solver(*Nonterminal*)
     | H_e: ~(exists r : data_resource, data_res_eq (SingleReg ?pid1 ?r1) r /\ data_res_eq (SingleReg ?pid2 ?r2) r) |- _ => apply different_preg_different_resource in H_e; reorder_solver(*Nonterminal*)
     | H_e: ~(exists r : data_resource, data_res_eq ?d1 r /\ data_res_eq ?d2 r) |- _ => clear H_e; reorder_solver(*Nonterminal*)
+    
+    (*break down memory operations involving reading from in flight mem*)
+    (*this needs to be early as 3-tuples are just nested 2-tuples, so any tuple destruction will kill this*)
+    | [H_rc:  forall (txid1 txid2 : mem_transaction_id) (v1 v2 v3 v4 : val)
+        (ifmo : in_flight_mem_ops) (c1 c2 : memory_chunk),
+    txid1 <> txid2 ->
+    ifmo txid1 = Some (v1, v3, c1) ->
+    ifmo txid2 = Some (v2, v4, c2) -> ~ (memory_conflict c1 c2 v1 v2),
+    H_ls: ?ifmo_i ?txid = Some (?v1, ?v5, ?m1),
+    H_rs: ?ifmo_i ?txid0 = Some (?v2, ?v6, ?m2)
+    |- (_, ?v1, ?m1) <> (_, ?v2, ?m2)] => apply mem_ne;  apply H_rc with (txid1 := txid)(txid2 := txid0)(v3 := v5) (v4 := v6)(ifmo:= ifmo_i); reorder_solver
+    
     (*deconstruct vptr - might be able to get rid of this somehow*)
     | H_v: Vptr ?a ?b = Vptr ?c ?d |- _ => inversion H_v; clear H_v; subst; reorder_solver (*Semiterminal*)
     | H_sm: Some ?x = Some ?y |- _ => inversion H_sm; clear H_sm; subst; reorder_solver (*Semiterminal*)
@@ -1917,10 +1986,11 @@ Ltac reorder_solver :=
     | [H_ne: pair ?a ?c <> pair ?b ?c |- ?a <> ?b] => apply tuple_inv_fneq in H_ne; assumption (*Terminal*)
     | [H_ne: pair ?c ?a <> pair ?c ?b |- ?a <> ?b] => apply tuple_inv_bneq in H_ne; assumption (*Terminal*)   
    (* Break apart mem*)
-    | [ H_rf:  forall (txid1 txid2 : mem_transaction_id) (v1 v2 v3 v4 : val) (ifmo : in_flight_mem_ops),
+    (* | [ H_rf:  forall (txid1 txid2 : mem_transaction_id) (v1 v2 v3 v4 : val) (ifmo : in_flight_mem_ops),
     txid1 <> txid2 -> ifmo txid1 = Some (v1, v3) -> ifmo txid2 = Some (v2, v4) -> v1 <> v2,
     H1: ?ifmo_i ?txid = Some (?v, ?v0),
-    H2: ?ifmo_i ?txid0 = Some (?v4, ?v5) |- (?pid, ?v) <> (?pid0, ?v4)] => assert (v <> v4); try apply H_rf with (txid1 := txid) (txid2 := txid0) (v3 := v0) (v4 := v5)(ifmo := ifmo_i); reorder_solver
+    H2: ?ifmo_i ?txid0 = Some (?v4, ?v5) |- (?pid, ?v) <> (?pid0, ?v4)] => assert (v <> v4); try apply H_rf with (txid1 := txid) (txid2 := txid0) (v3 := v0) (v4 := v5)(ifmo := ifmo_i); reorder_solver *)
+    (* | [ |- (?pid1 ?v1 ?m1 <> ?pid2 ?v2 ?m2)] => pose  *)
    
     (* More tuple manipulation*)
     | [H_ne: ?b <> ?a |- pair ?a _ <> pair ?b _] => apply neq_comm in H_ne; reorder_solver
@@ -1931,7 +2001,7 @@ Ltac reorder_solver :=
     | [H_ne: pair ?c ?a <> pair ?c ?b |- _] => apply tuple_inv_fneq in H_ne; reorder_solver
     | [ |- pair ?a ?c <> pair ?b ?d] => apply tuple_bneq; unfold not; intro; try discriminate; reorder_solver
     (*Break apart memory*)
-    | [H1: Some _ = Some ?m1, H2: Some _ = Some ?m2 |- ?m1 = ?m2] => unfold Mem.storev in *; unfold Mem.store in *; destruct matches in *; inv H1; inv H2; reorder_solver
+    (* | [H1: Some _ = Some ?m1, H2: Some _ = Some ?m2 |- ?m1 = ?m2] => unfold Mem.storev in *; unfold Mem.store in *; destruct matches in *; inv H1; inv H2; reorder_solver *)
     (* Break apart ireg0/iregsp*)
     | [|- context[ir0w _ ?r _]] => unfold ir0w; destruct r; reorder_solver (*Nonterminal*)
     | [|- context[ir0x _ ?r _]] => unfold ir0x; destruct r; reorder_solver (*Nonterminal*)
@@ -2027,7 +2097,80 @@ disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsi
 disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
 disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
 
-disable_cmps; unfold output_data_eq; unfold input_code_race_free in *; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches.
+disable_cmps; unfold output_data_eq; unfold input_code_race_free in *; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *. destruct matches. 
+
+apply four_and_shortcut; reorder_solver.
+apply four_and_shortcut; reorder_solver.
+reorder_solver.
+reorder_solver.
+reorder_solver.
+reorder_solver.
+reorder_solver.
+reorder_solver.
+reorder_solver.
+reorder_solver.
+reorder_solver.
+
+apply Trmap.writes_eq_if_vals.
+apply f_equal.
+assert(Some v6 = Some v1). rewrite <- Heqo7. rewrite <- Heqo1. apply load_ptrs in Heqo7. destruct v; try discriminate. pose Heqo3 as vptr_dup. apply store_ptrs in vptr_dup. destruct v4; try discriminate.  apply Mem.ld_str_gso with (v2 := v5)(b3 := b0)(o3 := i0)(t2 := m2). apply expand_memory_conflict. 
+
+apply H1 with (txid1 := txid)(txid2 := txid0)(v3 := v0)(v4 := v5)(ifmo := ifmo_i). reorder_solver. reorder_solver. reorder_solver. reorder_solver. inv H6. reflexivity.
+
+reorder_solver.
+reorder_solver.
+reorder_solver.
+reorder_solver.
+reorder_solver.
+
+
+
+
+rewrite EWmap.gso in Heqo5. reorder_solver. Unset Printing Notations.
+
+apply mem_ne. apply H1 with (txid1 := txid)(txid2 := txid0)(v3 := v0) (v4 := v5)(ifmo:= ifmo_i). reorder_solver. reorder_solver. reorder_solver.
+
+auto.
+reorder_solver.
+
+rewrite EWmap.gso in Heqo5. rewrite Heqo0 in Heqo5. inv Heqo5. rewrite Trmap.gso in Heqo1. reorder_solver.
+
+reorder_solver.
+
+auto.
+
+Ltac break_mem :=
+    match goal with
+    | [H_rc:  forall (txid1 txid2 : mem_transaction_id) (v1 v2 v3 v4 : val)
+    (ifmo : in_flight_mem_ops) (c1 c2 : memory_chunk),
+  txid1 <> txid2 ->
+  ifmo txid1 = Some (v1, v3, c1) ->
+  ifmo txid2 = Some (v2, v4, c2) -> SingleMemAddr c1 v1 <> SingleMemAddr c2 v2,
+  H_ls: ?ifmo_i ?txid = Some (?v1, ?v5, ?m1),
+  H_rs: ?ifmo_i ?txid0 = Some (?v2, ?v6, ?m2)
+  |- (_, ?v1, ?m1) <> (_, ?v2, ?m2)] => apply mem_ne;  apply H_rc with (txid1 := txid)(txid2 := txid0)(v3 := v5) (v4 := v6)(ifmo:= ifmo_i); reorder_solver
+  end.
+
+  break_mem.
+
+apply mem_ne.
+apply H1 with (txid1 := txid)(txid2 := txid0)(v3 := v0) (v4 := v5)(ifmo:= ifmo_i).
+reorder_solver.
+reorder_solver.
+reorder_solver.
+
+
+assert (SingleMemAddr m v <> SingleMemAddr m2 v4).
+apply H1 with (txid1 := txid)(txid2 := txid0)(v3 := v0) (v4 := v5)(ifmo:= ifmo_i).
+reorder_solver. assumption. assumption.
+
+apply mem_ne. assumption.
+
+
+
+reorder_solver.
+
+reorder_solver.
 
 
 reorder_solver.
@@ -2042,7 +2185,8 @@ reorder_solver.
 reorder_solver.
 reorder_solver.
 
-apply Trmap.writes_eq_if_vals. apply destruct_some. apply tup_equal. split. reflexivity.
+(*TODO: better way of asserting val must be ptr*)
+apply Trmap.writes_eq_if_vals. assert (Some v1 = Some v6).  rewrite <- Heqo1. rewrite <- Heqo7. apply load_ptrs in Heqo7. unfold is_vptr in Heqo7. destruct v; try reflexivity. pose Heqo3 as Heqo8. apply store_ptrs in Heqo8. unfold is_vptr in Heqo8. destruct v4; try discriminate. apply Mem.ld_str_gso with (t2 := Mint32) (b3 := b0) (o3 := i0) (v2 := v5). 
   unfold Mem.storev in *. unfold Mem.store in *. destruct matches in *. inv Heqo3. unfold Mem.loadv in *. unfold Mem.load in *. destruct matches in *. inv Heqo1. inv Heqo7.
 
 
