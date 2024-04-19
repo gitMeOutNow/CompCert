@@ -1381,8 +1381,7 @@ Definition data_address_src (pid: processor_id)(a: addressing) (d: data_resource
 
 Definition memory_conflict(c1 c2: memory_chunk)(a1 a2: val): Prop :=
     match a1, a2 with
-    | Vptr b1 ofs1, Vptr b2 ofs2 => b1 = b2 /\ ~Intv.disjoint (Ptrofs.unsigned (ofs1), Ptrofs.unsigned ofs1 + Z.of_nat (Memdata.size_chunk_nat c1))
-        (Ptrofs.unsigned ofs2, Ptrofs.unsigned ofs2 + Z.of_nat (Memdata.size_chunk_nat c2)) 
+    | Vptr b1 ofs1, Vptr b2 ofs2 => b1 = b2 /\ ~(Ptrofs.unsigned ofs1 + size_chunk c1 <= Ptrofs.unsigned ofs2 \/ Ptrofs.unsigned ofs2 + size_chunk c2 <= Ptrofs.unsigned ofs1)
     | _, _ => True
     end.
 
@@ -1874,17 +1873,10 @@ Proof. intuition. Qed.
 Remark reduce_ors_3: ~(False \/ True) -> False.
 Proof. intuition. Qed.
 
-Remark mc_id: forall m1 v2, memory_conflict m1 m1 v2 v2.
-Proof.
-intros. unfold memory_conflict. destruct v2; try reflexivity. split. reflexivity. destruct m1;
-apply Intv.disjoint_id; unfold Intv.empty; simpl; intuition.
-Qed.
-
-
 Remark mem_ne: forall m1 v1 m2 v2 (pid1 pid2: processor_id),
 (~ memory_conflict m1 m2 v1 v2) -> (pid1, v1, m1) <> (pid2, v2, m2).
 Proof.
-intros. unfold not. intro. apply H. inv H0. apply mc_id.
+intros. unfold not. intro. apply H. unfold memory_conflict. inv H0. destruct v2; try auto. split. reflexivity. unfold not. intro. destruct m2; unfold size_chunk in H0; lia.
 Qed.
 
 Definition is_vptr (v: val): Prop := match v with
@@ -1904,30 +1896,19 @@ Proof.
     intros. unfold Mem.storev in H. destruct v1; try discriminate H. unfold is_vptr. reflexivity.
 Qed.
 
-(* cool proof: decidability implies double negation*)
-Remark disjoint_nnp: forall a b c d, (~ ~ Intv.disjoint (a, b) (c, d)) -> Intv.disjoint (a, b)(c, d).
-Proof.
-intros.
-    destruct (Intv.disjoint_dec (a, b) (c, d)) as [HD | HnD].
-    - apply HD.
-    - contradiction H.
-Qed.
-
 Remark mem_chunk_length_sync: forall c v, Datatypes.length (encode_val c v) = size_chunk_nat c.
 Proof.
     intros. destruct c; simpl; unfold encode_val; unfold size_chunk_nat; unfold size_chunk; destruct v; simpl; intuition.
 Qed.
 
-Remark expand_memory_conflict: forall (c1 c2: memory_chunk) (b1 b2: block) o1 o2 v,
+Remark expand_memory_conflict: forall (c1 c2: memory_chunk) (b1 b2: block) o1 o2,
     ~memory_conflict c1 c2 (Vptr b1 o1) (Vptr b2 o2) -> 
-    b1 <> b2  \/ Intv.disjoint (Ptrofs.unsigned o1, Ptrofs.unsigned o1 + Z.of_nat (size_chunk_nat c1))
-        (Ptrofs.unsigned o2,
-        Ptrofs.unsigned o2 + Z.of_nat (Datatypes.length (encode_val c2 v))).
+    b1 <> b2  \/ Ptrofs.unsigned o1 + size_chunk c1 <= Ptrofs.unsigned o2 \/ Ptrofs.unsigned o2 + size_chunk c2 <= Ptrofs.unsigned o1.
 Proof.
-intros. unfold memory_conflict in H. apply not_and_or in H. simpl in H. rewrite mem_chunk_length_sync.
+intros. unfold memory_conflict in H. apply not_and_or in H.
 
 destruct H as [bNe | dNe]. left. assumption.
-right. apply disjoint_nnp. assumption.
+right. lia.
 Qed.
 
 Remark output_data_eq_refl: forall o, output_data_eq o o.
@@ -2113,126 +2094,53 @@ reorder_solver.
 
 apply Trmap.writes_eq_if_vals.
 apply f_equal.
-assert(Some v6 = Some v1). rewrite <- Heqo7. rewrite <- Heqo1. apply load_ptrs in Heqo7. destruct v; try discriminate. pose Heqo3 as vptr_dup. apply store_ptrs in vptr_dup. destruct v4; try discriminate.  apply Mem.ld_str_gso with (v2 := v5)(b3 := b0)(o3 := i0)(t2 := m2). apply expand_memory_conflict. 
 
-apply H1 with (txid1 := txid)(txid2 := txid0)(v3 := v0)(v4 := v5)(ifmo := ifmo_i). reorder_solver. reorder_solver. reorder_solver. reorder_solver. inv H6. reflexivity.
+assert(Some v6 = Some v1). 
+rewrite <- Heqo7. rewrite <- Heqo1. pose Heqo7 as ptr7. apply load_ptrs in ptr7. destruct v; try contradiction. 
+pose Heqo3 as ptr3. apply store_ptrs in ptr3. destruct v4; try contradiction. 
 
-reorder_solver.
-reorder_solver.
-reorder_solver.
-reorder_solver.
-reorder_solver.
+ 
+apply Mem.ld_str_gso with (v2 := v5)(b3 := b0)(o3 := i0)(t2 := m2). apply expand_memory_conflict.
+apply H1 with (txid1 := txid)(txid2 := txid0)(v3 := v0)(v4 := v5)(ifmo := ifmo_i); assumption. assumption.
 
-
-
-
-rewrite EWmap.gso in Heqo5. reorder_solver. Unset Printing Notations.
-
-apply mem_ne. apply H1 with (txid1 := txid)(txid2 := txid0)(v3 := v0) (v4 := v5)(ifmo:= ifmo_i). reorder_solver. reorder_solver. reorder_solver.
-
-auto.
-reorder_solver.
-
-rewrite EWmap.gso in Heqo5. rewrite Heqo0 in Heqo5. inv Heqo5. rewrite Trmap.gso in Heqo1. reorder_solver.
+inv H6. reflexivity.
 
 reorder_solver.
 
-auto.
+assert (Mem.loadv m m3 v = Mem.loadv m m_i v).
 
-Ltac break_mem :=
-    match goal with
-    | [H_rc:  forall (txid1 txid2 : mem_transaction_id) (v1 v2 v3 v4 : val)
-    (ifmo : in_flight_mem_ops) (c1 c2 : memory_chunk),
-  txid1 <> txid2 ->
-  ifmo txid1 = Some (v1, v3, c1) ->
-  ifmo txid2 = Some (v2, v4, c2) -> SingleMemAddr c1 v1 <> SingleMemAddr c2 v2,
-  H_ls: ?ifmo_i ?txid = Some (?v1, ?v5, ?m1),
-  H_rs: ?ifmo_i ?txid0 = Some (?v2, ?v6, ?m2)
-  |- (_, ?v1, ?m1) <> (_, ?v2, ?m2)] => apply mem_ne;  apply H_rc with (txid1 := txid)(txid2 := txid0)(v3 := v5) (v4 := v6)(ifmo:= ifmo_i); reorder_solver
-  end.
+pose Heqo1 as ptr1; apply load_ptrs in ptr1; destruct v; try contradiction.
+pose Heqo3 as ptr4; apply store_ptrs in ptr4; destruct v4; try contradiction.
 
-  break_mem.
-
-apply mem_ne.
-apply H1 with (txid1 := txid)(txid2 := txid0)(v3 := v0) (v4 := v5)(ifmo:= ifmo_i).
-reorder_solver.
-reorder_solver.
-reorder_solver.
-
-
-assert (SingleMemAddr m v <> SingleMemAddr m2 v4).
-apply H1 with (txid1 := txid)(txid2 := txid0)(v3 := v0) (v4 := v5)(ifmo:= ifmo_i).
-reorder_solver. assumption. assumption.
-
-apply mem_ne. assumption.
-
-
-
-reorder_solver.
-
-reorder_solver.
-
-
-reorder_solver.
-reorder_solver. 
-reorder_solver.
-reorder_solver.
-reorder_solver.
-reorder_solver.
-reorder_solver.
-reorder_solver.
-reorder_solver.
-reorder_solver.
-reorder_solver.
-
-(*TODO: better way of asserting val must be ptr*)
-apply Trmap.writes_eq_if_vals. assert (Some v1 = Some v6).  rewrite <- Heqo1. rewrite <- Heqo7. apply load_ptrs in Heqo7. unfold is_vptr in Heqo7. destruct v; try reflexivity. pose Heqo3 as Heqo8. apply store_ptrs in Heqo8. unfold is_vptr in Heqo8. destruct v4; try discriminate. apply Mem.ld_str_gso with (t2 := Mint32) (b3 := b0) (o3 := i0) (v2 := v5). 
-  unfold Mem.storev in *. unfold Mem.store in *. destruct matches in *. inv Heqo3. unfold Mem.loadv in *. unfold Mem.load in *. destruct matches in *. inv Heqo1. inv Heqo7.
-
-
-assert ( [ZMap.get (Ptrofs.unsigned i0)
-(PMap.set b (Mem.setN (encode_val Mint32 v5) (Ptrofs.unsigned i) (Mem.mem_contents m_i) !! b)
-   (Mem.mem_contents m_i)) !! b0;
-ZMap.get (Ptrofs.unsigned i0 + 1)
-(PMap.set b (Mem.setN (encode_val Mint32 v5) (Ptrofs.unsigned i) (Mem.mem_contents m_i) !! b)
-  (Mem.mem_contents m_i)) !! b0;
-ZMap.get (Ptrofs.unsigned i0 + 1 + 1)
-(PMap.set b (Mem.setN (encode_val Mint32 v5) (Ptrofs.unsigned i) (Mem.mem_contents m_i) !! b)
-  (Mem.mem_contents m_i)) !! b0;
-ZMap.get (Ptrofs.unsigned i0 + 1 + 1 + 1)
-(PMap.set b (Mem.setN (encode_val Mint32 v5) (Ptrofs.unsigned i) (Mem.mem_contents m_i) !! b)
-  (Mem.mem_contents m_i)) !! b0] =  [ZMap.get (Ptrofs.unsigned i0)
-  (PMap.set b (Mem.setN (encode_val Mint32 v5) (Ptrofs.unsigned i) (Mem.mem_contents m_i) !! b)
-     (Mem.mem_contents m_i)) !! b0;
-ZMap.get (Ptrofs.unsigned i0 + 1)
- (PMap.set b (Mem.setN (encode_val Mint32 v5) (Ptrofs.unsigned i) (Mem.mem_contents m_i) !! b)
-    (Mem.mem_contents m_i)) !! b0;
-ZMap.get (Ptrofs.unsigned i0 + 1 + 1)
- (PMap.set b (Mem.setN (encode_val Mint32 v5) (Ptrofs.unsigned i) (Mem.mem_contents m_i) !! b)
-    (Mem.mem_contents m_i)) !! b0;
-ZMap.get (Ptrofs.unsigned i0 + 1 + 1 + 1)
- (PMap.set b (Mem.setN (encode_val Mint32 v5) (Ptrofs.unsigned i) (Mem.mem_contents m_i) !! b)
-    (Mem.mem_contents m_i)) !! b0]). reflexivity. subst. reflexivity.
-      apply Mem.mkmem_ext.  reorder_solver.
-
-
-
-auto.
-
-
-destruct_TRset.
-reorder_solver.  assumption. assumption. reorder_solver.
-
-reorder_solver.
-
- reorder_solver. auto. apply H1. reorder_solver. rewrite Heqo3 in H4.  rewrite Trmap.gso in Heqo1. rewrite Heqo in H4. rewrite Heqo unfold not in H4. 
+apply Mem.ld_str_gso with (v2 := v5)(b3 := b0)(o3 := i0)(t2 := m2).
+apply expand_memory_conflict.
+apply H1 with (txid1 := txid)(txid2 := txid0)(v3 := v0)(v4 := v5)(ifmo := ifmo_i); assumption. assumption.
  reorder_solver.
- rewrite input_code_race_free.  rewrite Heqo0 in Heqo5. inv Heqo5. reflexivity.
-reorder_solver. 
-unfold Mem.storev in *. unfold Mem.store in *. destruct matches in *. inv Heqo4. inv Heqo2. Unset Printing Notations. apply Mem.mkmem_ext. reorder_solver. reorder_solver. reorder_solver. 
-reorder_solver. reorder_solver.
+
+reorder_solver.
+reorder_solver.
+reorder_solver.
+reorder_solver.
+reorder_solver.
+reorder_solver.
+reorder_solver.
+
+reorder_solver.
 
 
+assert (Mem.loadv m m1 v = Mem.loadv m m_i v).
+
+pose Heqo5 as ptr1; apply load_ptrs in ptr1; destruct v; try contradiction.
+pose Heqo3 as ptr4; apply store_ptrs in ptr4; destruct v1; try contradiction.
+
+(*manually supply store parameters*)
+apply Mem.ld_str_gso with (v2 := v2)(b3 := b0)(o3 := i0)(t2 := m0).
+apply expand_memory_conflict.
+apply H1 with (txid1 := txid)(txid2 := txid0)(v3 := v0)(v4 := v2)(ifmo := ifmo_i); assumption. assumption.
+ reorder_solver.
+
+
+reorder_solver.
 
 disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
 disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.

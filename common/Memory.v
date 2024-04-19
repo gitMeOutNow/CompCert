@@ -4315,6 +4315,7 @@ Record unchanged_on (m_before m_after: mem) : Prop := mk_unchanged_on {
     ZMap.get ofs (PMap.get b m_before.(mem_contents))
 }.
 
+
 Lemma unchanged_on_refl:
   forall m, unchanged_on m m.
 Proof.
@@ -4525,32 +4526,15 @@ Remark vptr_ne:
     -left. assumption.
   Qed.        
 
-Theorem ld_str_gso: forall (v2: val) b1 o1 b3 o3 t1 t2 m m',
-  b1 <> b3 \/  Intv.disjoint (Ptrofs.unsigned o1, Ptrofs.unsigned o1 + Z.of_nat (size_chunk_nat t1))
-  (Ptrofs.unsigned o3, Ptrofs.unsigned o3 + Z.of_nat (Datatypes.length (encode_val t2 v2)))  -> storev t2 m (Vptr b3 o3) v2 = Some m' -> loadv t1 m' (Vptr b1 o1) = loadv t1 m (Vptr b1 o1).
+
+(*maybe not needed?*)
+Theorem ld_str_gso: forall (v2: val) b1 o1 b3 o3 t1 t2 (m m': mem),
+  b1 <> b3 \/ (Ptrofs.unsigned o1 + size_chunk t1 <= Ptrofs.unsigned o3 \/
+  Ptrofs.unsigned o3 + size_chunk t2 <= Ptrofs.unsigned o1)  -> storev t2 m (Vptr b3 o3) v2 = Some m' -> loadv t1 m' (Vptr b1 o1) = loadv t1 m (Vptr b1 o1).
 Proof.
-  intros. unfold loadv. unfold load.
-
-  pose H0 as store_dup. apply store_valid_access_3 in store_dup.
-  pose H0 as store_dup_dup. apply store_unchanged_on in store_dup_dup.
-
-  unfold storev in H0. unfold store in H0.
-  
-  rewrite pred_dec_true in H0.
-  destruct (valid_access_dec m' t1 b1 (Ptrofs.unsigned o1) Readable).
-  destruct v. rewrite pred_dec_true.
-  apply f_equal. apply f_equal. inv H0. simpl. Unset Printing Notations.
-  
-  destruct (eq_block b1 b3) as [B_eq | B_neq].
-  destruct (Intv.disjoint_dec (Ptrofs.unsigned o1, Ptrofs.unsigned o1 + Z.of_nat (size_chunk_nat t1)) (Ptrofs.unsigned o3, Ptrofs.unsigned o3 + Z.of_nat (Datatypes.length (encode_val t2 v2)))) as [Idj | Indj].
-  subst. rewrite PMap.gss. apply getN_setN_disjoint. apply Idj.
-  intuition.
-  rewrite PMap.gso. reflexivity. apply B_neq.  
-  admit.
-  rewrite pred_dec_false. reflexivity. red. intros. admit.
-  apply store_dup.
-  (*TODO: figure out permissions. This isn't a huge deal, as we don't touch that system at all, but I'd like to not cheat here*)
-  Admitted.
+  intros.
+  eapply load_store_other; eauto.
+ Qed.
 
   End Mem.
 
