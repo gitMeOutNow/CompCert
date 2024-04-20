@@ -1928,6 +1928,27 @@ Qed.
 (* Remark different_address_different_resource:  
 ~(exists r : data_resource, data_res_eq ?d1 r /\ data_res_eq (SingleReg ?pid2 (preg_of_iregsp ?rd2)) r) -> rd1 <> rd2.  *)
 
+(*auxilary ltac that breaks down memory accesses*)
+(* ultimately introduces no new subgoals, but proves that two memory accesses are equal*)
+Ltac breakdown_mem :=
+match goal with
+| [ H_tx1: ?ifmo_p ?tx1 = Some (Vptr ?bl ?il, ?vtx0, ?t1),
+    H_tx2: ?ifmo_p ?tx2 = Some (Vptr ?bs ?is, ?vtx2, ?c2),
+    no_race: forall (txid1 txid2 : mem_transaction_id) (v1 v2 v3 v4 : val)
+            (ifmo : in_flight_mem_ops) (c1 c2 : memory_chunk),
+            txid1 <> txid2 ->
+            ifmo txid1 = Some (v1, v3, c1) ->
+            ifmo txid2 = Some (v2, v4, c2) -> ~ memory_conflict c1 c2 v1 v2,
+    H_st: Mem.storev ?c2 ?m_i (Vptr ?bs ?is) ?vwv = Some ?m1
+         |- Mem.loadv ?t ?m1 (Vptr ?bl ?il) = Mem.loadv ?t ?m_i (Vptr ?bl ?il)]
+         =>  apply Mem.ld_str_gso with (v2 := vwv)(b3 := bs)(o3 := is)(t2 := c2); [apply expand_memory_conflict; apply no_race with (txid1 := tx1)(txid2 := tx2)(v3 := vtx0)(v4 := vtx2)(ifmo := ifmo_p); assumption | assumption] 
+|   [H_l1: Mem.loadv ?t ?m_i ?v = _, 
+    H_l2: Mem.loadv ?t ?m1 ?v = _, 
+    H_st: Mem.storev ?t2 ?m_i ?vwa ?vwv = Some ?m1 |- _] => assert (Mem.loadv t m1 v = Mem.loadv t m_i v);
+                                                (pose H_l1 as ptr1; apply load_ptrs in ptr1) + (pose H_l2 as ptr1; apply load_ptrs in ptr1); destruct v; try contradiction;
+                                            pose H_st as ptr2; apply store_ptrs in ptr2; destruct vwa; try contradiction; [breakdown_mem | idtac]
+end.
+
 Ltac reorder_solver :=
     match goal with
     | [|-?a = ?a] => reflexivity (*Terminal*)
@@ -2038,6 +2059,10 @@ Ltac reorder_solver :=
     | [|- EWmap.set ?A ?v1 (EWmap.set ?B ?v2 (EWmap.set ?C ?v3 ?mi)) = EWmap.set ?B ?v2 (EWmap.set ?C ?v3 (EWmap.set ?A ?v1 ?mi))] => symmetry; rewrite <- EWmap.gscsc_ext; try reflexivity; reorder_solver (* Nonterminal*)
     | [|- EWmap.set ?w ?v2 (EWmap.set ?x ?v3 (EWmap.set ?y ?v4 (EWmap.set ?z ?v5 ?m))) = EWmap.set ?y ?v4 (EWmap.set ?z ?v5 (EWmap.set ?w ?v2 (EWmap.set ?x ?v3 ?m)))] => rewrite <- EWmap.gscsc_2of4; try reflexivity; reorder_solver (* Nonterminal*)  
     | [|- context[EWmap.set ?k1 _ ?map ?k2]] => rewrite EWmap.gso; reorder_solver (* Nonterminal *)
+    (*call auxilary mewory ltac*)
+    | [H_l1: Mem.loadv ?t ?m_i ?v = _, 
+    H_l2: Mem.loadv ?t ?m1 ?v = _, 
+    H_st: Mem.storev ?t2 ?m_i ?vwa ?vwv = Some ?m1 |- _] => breakdown_mem; reorder_solver
     | _ => try reflexivity
 end.
 
@@ -2092,32 +2117,48 @@ reorder_solver.
 reorder_solver.
 reorder_solver.
 
-apply Trmap.writes_eq_if_vals.
-apply f_equal.
+(* Ltac breakdown_mem :=
+match goal with
+| [ H_tx1: ?ifmo_p ?tx1 = Some (Vptr ?bl ?il, ?vtx0, ?t1),
+    H_tx2: ?ifmo_p ?tx2 = Some (Vptr ?bs ?is, ?vtx2, ?c2),
+    no_race: forall (txid1 txid2 : mem_transaction_id) (v1 v2 v3 v4 : val)
+            (ifmo : in_flight_mem_ops) (c1 c2 : memory_chunk),
+            txid1 <> txid2 ->
+            ifmo txid1 = Some (v1, v3, c1) ->
+            ifmo txid2 = Some (v2, v4, c2) -> ~ memory_conflict c1 c2 v1 v2,
+    H_st: Mem.storev ?c2 ?m_i (Vptr ?bs ?is) ?vwv = Some ?m1
+         |- Mem.loadv ?t ?m1 (Vptr ?bl ?il) = Mem.loadv ?t ?m_i (Vptr ?bl ?il)]
+         =>  apply Mem.ld_str_gso with (v2 := vwv)(b3 := bs)(o3 := is)(t2 := c2); [apply expand_memory_conflict; apply no_race with (txid1 := tx1)(txid2 := tx2)(v3 := vtx0)(v4 := vtx2)(ifmo := ifmo_p); assumption | assumption] 
+|   [H_l1: Mem.loadv ?t ?m_i ?v = _, 
+    H_l2: Mem.loadv ?t ?m1 ?v = _, 
+    H_st: Mem.storev ?t2 ?m_i ?vwa ?vwv = Some ?m1 |- _] => assert (Mem.loadv t m1 v = Mem.loadv t m_i v);
+                                                (pose H_l1 as ptr1; apply load_ptrs in ptr1) + (pose H_l2 as ptr1; apply load_ptrs in ptr1); destruct v; try contradiction;
+                                            pose H_st as ptr2; apply store_ptrs in ptr2; destruct vwa; try contradiction; [breakdown_mem | idtac]
+end. *)
 
-assert(Some v6 = Some v1). 
-rewrite <- Heqo7. rewrite <- Heqo1. pose Heqo7 as ptr7. apply load_ptrs in ptr7. destruct v; try contradiction. 
-pose Heqo3 as ptr3. apply store_ptrs in ptr3. destruct v4; try contradiction. 
+reorder_solver.
+reorder_solver.
+(*
+
+ apply Mem.ld_str_gso with (v2 := vwv)(b3 := bs)(o3 := is)(t2 := t2)
+
+ b <> ?b3 \/
+Ptrofs.unsigned i + size_chunk m <= Ptrofs.unsigned ?o3 \/
+Ptrofs.unsigned ?o3 + size_chunk ?t2 <= Ptrofs.unsigned i
+
+
+b <> b0 \/
+Ptrofs.unsigned i + size_chunk m <= Ptrofs.unsigned i0 \/
+Ptrofs.unsigned i0 + size_chunk m2 <= Ptrofs.unsigned i
+
+*)
+reorder_solver.
+reorder_solver.
+
+reorder_solver.
+
 
  
-apply Mem.ld_str_gso with (v2 := v5)(b3 := b0)(o3 := i0)(t2 := m2). apply expand_memory_conflict.
-apply H1 with (txid1 := txid)(txid2 := txid0)(v3 := v0)(v4 := v5)(ifmo := ifmo_i); assumption. assumption.
-
-inv H6. reflexivity.
-
-reorder_solver.
-
-assert (Mem.loadv m m3 v = Mem.loadv m m_i v).
-
-pose Heqo1 as ptr1; apply load_ptrs in ptr1; destruct v; try contradiction.
-pose Heqo3 as ptr4; apply store_ptrs in ptr4; destruct v4; try contradiction.
-
-apply Mem.ld_str_gso with (v2 := v5)(b3 := b0)(o3 := i0)(t2 := m2).
-apply expand_memory_conflict.
-apply H1 with (txid1 := txid)(txid2 := txid0)(v3 := v0)(v4 := v5)(ifmo := ifmo_i); assumption. assumption.
- reorder_solver.
-
-reorder_solver.
 reorder_solver.
 reorder_solver.
 reorder_solver.
@@ -2126,20 +2167,7 @@ reorder_solver.
 reorder_solver.
 
 reorder_solver.
-
-
-assert (Mem.loadv m m1 v = Mem.loadv m m_i v).
-
-pose Heqo5 as ptr1; apply load_ptrs in ptr1; destruct v; try contradiction.
-pose Heqo3 as ptr4; apply store_ptrs in ptr4; destruct v1; try contradiction.
-
-(*manually supply store parameters*)
-apply Mem.ld_str_gso with (v2 := v2)(b3 := b0)(o3 := i0)(t2 := m0).
-apply expand_memory_conflict.
-apply H1 with (txid1 := txid)(txid2 := txid0)(v3 := v0)(v4 := v2)(ifmo := ifmo_i); assumption. assumption.
- reorder_solver.
-
-
+reorder_solver.
 reorder_solver.
 
 disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
