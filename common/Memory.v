@@ -4640,6 +4640,9 @@ destruct (Z.leb (wa1 + Z.of_nat (length vl1)) read_address) eqn: B2.
 -apply IHn_read. lia.
 Qed. 
 
+Theorem str_str_comm_any_v: forall (m_i m_t1 m_t2 m_f1 m_f2: mem) (v1 v2: address) (sv1 sv2: val) (t1 t2: memory_chunk), 
+
+
 Theorem str_str_comm: forall (m_i m_t1 m_t2 m_f1 m_f2: mem) (b1 b2: block)(o1 o2: ptrofs) (sv1 sv2: val) (t1 t2: memory_chunk), 
  b1 <> b2 \/ (Ptrofs.unsigned o1 + size_chunk t1 <= Ptrofs.unsigned o2 \/ Ptrofs.unsigned o2 + size_chunk t2 <= Ptrofs.unsigned o1)
   -> storev t1 m_i (Vptr b1 o1) sv1 = Some m_t1 
@@ -4749,6 +4752,26 @@ Theorem str_str_comm: forall (m_i m_t1 m_t2 m_f1 m_f2: mem) (b1 b2: block)(o1 o2
 
   unfold load. rewrite pred_dec_false. rewrite pred_dec_false. reflexivity. assumption. assumption.
   Qed.
+
+
+  Theorem store_validity: forall m m_i v v0 v1 v2 m1 m0 m3,
+  Mem.storev m m_i v v0 = Some m0 -> Mem.storev m1 m_i v1 v2 = Some m3 -> Mem.storev m m3 v v0 = None -> False.
+  Proof.
+    intros. destruct v; destruct v1; unfold storev in *; try discriminate.
+    apply store_valid_access_3 in H. 
+    apply store_valid_access_1 with (chunk' := m)(b' := b)(ofs' := Ptrofs.unsigned i)(p := Writable) in H0.
+    unfold store in H1. rewrite pred_dec_true in H1. discriminate. assumption. assumption.
+    Qed.
+
+Theorem store_validity_1: forall m m_i v v0 v1 v2 m1 m0 m2,
+Mem.storev m1 m_i v1 v2 = None -> Mem.storev m m_i v v0 = Some m0 -> Mem.storev m1 m0 v1 v2 = Some m2 -> False.
+Proof.
+intros. destruct v; destruct v1; unfold storev in *; try discriminate.
+unfold store in H.
+apply store_valid_access_3 in H1.
+apply store_valid_access_2 with (chunk' := m1)(b' := b0)(ofs' := Ptrofs.unsigned i0)(p := Writable) in H0.
+rewrite pred_dec_true in H. discriminate. assumption. assumption.
+Qed.
 
 
 

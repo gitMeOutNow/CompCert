@@ -1863,10 +1863,10 @@ Definition output_data_eq (o1 o2: outcome): Prop :=
     | MemSimStuck, MemSimStuck => True
     | MemSimStuck, _ => False
     | _, MemSimStuck => False
-    | MemSimJumpOut ars1 m1 ifmo1 eaw1, MemSimJumpOut ars2 m2 ifmo2 eaw2 => ars1 = ars2 /\ m1 = m2 /\ ifmo1 = ifmo2 /\ eaw1 = eaw2
-    | MemSimNext ars1 m1 ifmo1 eaw1, MemSimNext ars2 m2 ifmo2 eaw2 => ars1 = ars2 /\ m1 = m2 /\ ifmo1 = ifmo2 /\ eaw1 = eaw2
-    | MemSimNext ars1 m1 ifmo1 eaw1, MemSimJumpOut ars2 m2 ifmo2 eaw2 => ars1 = ars2 /\ m1 = m2 /\ ifmo1 = ifmo2 /\ eaw1 = eaw2
-    | MemSimJumpOut ars1 m1 ifmo1 eaw1, MemSimNext ars2 m2 ifmo2 eaw2 => ars1 = ars2 /\ m1 = m2 /\ ifmo1 = ifmo2 /\ eaw1 = eaw2
+    | MemSimJumpOut ars1 m1 ifmo1 eaw1, MemSimJumpOut ars2 m2 ifmo2 eaw2 => ars1 = ars2 /\ Mem.mem_extensional m1 m2 /\ ifmo1 = ifmo2 /\ eaw1 = eaw2
+    | MemSimNext ars1 m1 ifmo1 eaw1, MemSimNext ars2 m2 ifmo2 eaw2 => ars1 = ars2 /\ Mem.mem_extensional m1 m2 /\ ifmo1 = ifmo2 /\ eaw1 = eaw2
+    | MemSimNext ars1 m1 ifmo1 eaw1, MemSimJumpOut ars2 m2 ifmo2 eaw2 => ars1 = ars2 /\ Mem.mem_extensional m1 m2 /\ ifmo1 = ifmo2 /\ eaw1 = eaw2
+    | MemSimJumpOut ars1 m1 ifmo1 eaw1, MemSimNext ars2 m2 ifmo2 eaw2 => ars1 = ars2 /\ Mem.mem_extensional m1 m2 /\ ifmo1 = ifmo2 /\ eaw1 = eaw2
     end.
 
 Remark reduce_ors_1: ~(True \/ True) -> False.
@@ -1921,12 +1921,13 @@ Qed.
 
 Remark output_data_eq_refl: forall o, output_data_eq o o.
 Proof.
-intros. unfold output_data_eq. destruct o; auto.
+intros. unfold output_data_eq. destruct o; auto. split. reflexivity. split. apply Mem.mem_self_extensional. auto. split. auto. split. apply Mem.mem_self_extensional. auto.
 Qed.
 
 Remark output_data_eq_sym: forall o1 o2, output_data_eq o1 o2 -> output_data_eq o2 o1.
 Proof.
-intros. unfold output_data_eq in *. destruct o1; destruct o2;  destruct H; try destruct H0; try destruct H1; try apply four_and_shortcut; auto.
+intros. unfold output_data_eq in *. destruct o1; destruct o2;  destruct H; try destruct H0; try destruct H1; try apply four_and_shortcut; auto;
+unfold Mem.mem_extensional in *; intros; symmetry; apply H0. 
 Qed.
 
 Remark destruct_some: forall (A: Type) (a b: A), a = b -> Some a = Some b.
@@ -1941,11 +1942,18 @@ Proof.
     -destruct vc1; destruct vc2; try reflexivity. apply H. 
 Qed.
 
+Ltac convert_pointers H :=
+    match type of H with
+    | Mem.storev _ _ ?va _ = Some _ => pose H as Hptr; apply store_ptrs in Hptr; destruct va; try discriminate; clear Hptr
+    | Mem.loadv _ _ ?va = Some _ => pose H as Hptr; apply load_ptrs in Hptr; destruct va; try discriminate; clear Hptr
+    | _ => idtac
+    end.
+
 Remark cmplu_valid_ptr: forall m_i m_1 c vc1 vc2 o vwa vwv ch,
    Val.cmplu_bool (Mem.valid_pointer m_i) c vc1  vc2 = o -> 
    Mem.storev ch m_i vwa vwv = Some m_1 -> Val.cmplu_bool (Mem.valid_pointer m_1) c vc1 vc2 = o.
 Proof.
-    intros. pose H0 as Hptr. apply store_ptrs in Hptr. destruct vwa; try discriminate.
+    intros. convert_pointers H0.
     unfold Mem.storev in H0.
     unfold Val.cmplu_bool in *. destruct o.
     - destruct vc1; destruct vc2; try discriminate. apply H.
@@ -2017,6 +2025,7 @@ Ltac reorder_solver :=
     | [|-?a = ?a] => reflexivity (*Terminal*)
     | [H_a: ?a |- ?a] => assumption (*Terminal*)
     | [H_not_comm: ?a <> ?b |- ?b <> ?a] => apply neq_comm in H_not_comm; assumption (*Terminal*)
+    | [|- Mem.mem_extensional ?m ?m] => apply Mem.mem_self_extensional (*Terminal*)
     (* Boring transitivity*)
     | H_l: ?a = ?b, H_r: context[?a] |- _ => rewrite H_l in H_r; try inversion H_r; subst; reorder_solver (* Nonterminal*)
     | H_l: ?a = ?b |- context[?a] => rewrite H_l; try inversion H_l; subst; reorder_solver (* Nonterminal*)
@@ -2029,7 +2038,33 @@ Ltac reorder_solver :=
     | H_e: ~(exists r: data_resource, data_res_eq (TransactionId ?tid1) r /\ data_res_eq (TransactionId ?tid2) r) |- _ => apply different_transactions_different_resource in H_e; reorder_solver(*Nonterminal*)
     | H_e: ~(exists r : data_resource, data_res_eq (SingleReg ?pid1 ?r1) r /\ data_res_eq (SingleReg ?pid2 ?r2) r) |- _ => apply different_preg_different_resource in H_e; reorder_solver(*Nonterminal*)
     | H_e: ~(exists r : data_resource, data_res_eq ?d1 r /\ data_res_eq ?d2 r) |- _ => clear H_e; reorder_solver(*Nonterminal*)
-    
+    (* break down str/str conflicts - all terminal*)
+     (*potential problem: proof of valid stores requires that eauto correctly matches the newly generated offsets*)
+     | [ H_i1:  Mem.storev ?m ?m_i ?v ?v0 = Some ?m0,
+     H_i2: Mem.storev ?m1 ?m_i ?v1 ?v2 = Some ?m3,
+     H_t1:  Mem.storev ?m1 ?m0 ?v1 ?v2 = Some ?m2,
+     H_t2:  Mem.storev ?m ?m3 ?v ?v0 = Some ?m4,
+     H_tx1:  ?ifmo_i ?txid = Some (?v, ?v0, ?m),
+     H_tx2: ?ifmo_i ?txid0 = Some (?v1, ?v2, ?m1),
+     H_mc:  forall (txid1 txid2 : mem_transaction_id) (v1 v2 v3 v4 : val) (ifmo : in_flight_mem_ops)
+         (c1 c2 : memory_chunk),
+         txid1 <> txid2 ->
+         ifmo txid1 = Some (v1, v3, c1) -> ifmo txid2 = Some (v2, v4, c2) -> ~ memory_conflict c1 c2 v1 v2
+     |- Mem.mem_extensional ?m2 ?m4] => convert_pointers H_i1; convert_pointers H_i2; 
+     eapply Mem.str_str_comm with (t1 := m)(t2 := m1)(m_t1 := m0)(m_t2 := m3)(sv1 := v0)(sv2 := v2)(m_i := m_i); eauto;
+     apply expand_memory_conflict; eapply H_mc with (ifmo := ifmo_i)(v3 := v0)(v4 := v2)(txid1 := txid)(txid2 := txid0); auto        
+    | [H_contra: Mem.storev ?m ?m3 ?v ?v0 = None,
+        H_1: Mem.storev ?m1 ?m_i ?v1 ?v2 = Some ?m3, 
+        H_2: Mem.storev ?m ?m_i ?v ?v0 = Some ?m0 |- False] => apply Mem.store_validity with (m := m) (m_i := m_i) (v := v) (v0 := v0) (v1 := v1) (v2 := v2) (m1 := m1) (m0 := m0) (m3 := m3); auto
+    | [H_contra: Mem.storev ?m1 ?m0 ?v1 ?v2 = None,
+        H_1:  Mem.storev ?m ?m_i ?v ?v0 = Some ?m0, 
+        H_2:  Mem.storev ?m1 ?m_i ?v1 ?v2 = Some ?m2 |- False] => apply Mem.store_validity with (m := m1) (m3 := m0)(v := v1)(v0 := v2)(m_i := m_i)(m0 := m2)(m1 := m)(v1 := v)(v2 := v0); auto
+    | [H_1: Mem.storev ?m ?m_i ?v ?v0 = Some ?m0, 
+        H_contra: Mem.storev ?m1 ?m_i ?v1 ?v2 = None,
+        H_2: Mem.storev ?m1 ?m0 ?v1 ?v2 = Some ?m2  |- False] => apply Mem.store_validity_1 with (m := m) (m_i := m_i) (v := v) (v0 := v0) (v1 := v1) (v2 := v2) (m1 := m1) (m0 := m0) (m2 := m2); auto
+    | [H_contra: Mem.storev ?m ?m_i ?v ?v0 = None,
+        H1:  Mem.storev ?m0 ?m_i ?v1 ?v2 = Some ?m1,
+        H2: Mem.storev ?m ?m1 ?v ?v0 = Some ?m2 |- False] => apply Mem.store_validity_1 with (m1 := m)(m_i := m_i)(v1 := v)(v2 := v0)(m := m0)(v := v1)(v0 := v2)(m0 := m1)(m2 := m2); auto
     (*break down memory operations involving reading from in flight mem*)
     (*this needs to be early as 3-tuples are just nested 2-tuples, so any tuple destruction will kill this*)
     | [H_rc:  forall (txid1 txid2 : mem_transaction_id) (v1 v2 v3 v4 : val)
@@ -2180,8 +2215,6 @@ disable_cmps; unfold output_data_eq; unfold input_code_race_free in *; unfold ev
 disable_cmps; unfold output_data_eq; unfold input_code_race_free in *; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request;  unfold early_ack_write; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
 disable_cmps; unfold output_data_eq; unfold input_code_race_free in *; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request;  unfold early_ack_write; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
 disable_cmps; unfold output_data_eq; unfold input_code_race_free in *; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request;  unfold early_ack_write; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold input_code_race_free in *; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request;  unfold early_ack_write; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-
 disable_cmps; unfold output_data_eq; unfold input_code_race_free in *; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request;  unfold early_ack_write; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
 disable_cmps; unfold output_data_eq; unfold input_code_race_free in *; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request;  unfold early_ack_write; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
 disable_cmps; unfold output_data_eq; unfold input_code_race_free in *; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request;  unfold early_ack_write; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
