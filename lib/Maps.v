@@ -1373,19 +1373,6 @@ Module IMap(X: INDEXED_TYPE).
   Proof.
     intros. unfold set. apply PMap.set2.
   Qed.
-
-  Lemma gscsc:
-    forall (A: Type) (m: t A) (x y: elt) (v1 v2: A),
-    x <> y ->
-    set x v1 (set y v2 m) = set y v2 (set x v1 m).
-    Proof.
-      intros. unfold set.
-      unfold PMap.set.
-      unfold PTree.set. simpl.
-      destruct (snd m). unfold PTree.set'. rewrite Axioms.functional_extensionality. destruct p.
-      apply Axioms.functional_extensionality.
-      destruct (X.index x). )
-
 End IMap.
 
 Module ZIndexed.
