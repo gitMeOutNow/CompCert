@@ -1548,8 +1548,9 @@ Definition data_source(i: instruction) (dr: data_resource): Prop :=
    | Pcfi_adjust ofs pid => False                                           (**r .cfi_adjust debug directive *)
    | Pcfi_rel_offset ofs  pid => False                                       (**r .cfi_rel_offset debug directive *)
    | Pincpc pid => data_res_eq (SingleReg pid PC) dr
-   | Memfence pid => match dr with
-                    | SingleReg pid' _ => pid = pid'
+   (* prevents reordering of memory operations*)
+   | Memfence _ => match dr with
+                    | TransactionId _ => True 
                     | _ => False
                     end
     | EarlyAck txid pid => data_res_eq (TransactionId txid) dr
@@ -1715,7 +1716,7 @@ Definition data_sink(i: instruction) (dr: data_resource) (g: genv) (ars: allregs
     | Pcfi_rel_offset ofs  pid => False                                     (**r .cfi_rel_offset debug directive *)
     | Pincpc pid => data_res_eq (SingleReg pid PC) dr 
     | Memfence pid => match dr with
-                    | SingleReg pid' _ => pid = pid'
+                    | TransactionId _ => True
                     | _ => False
                     end
     | EarlyAck txid pid =>  data_res_eq (TransactionId txid) dr
@@ -1726,6 +1727,8 @@ Definition data_sink(i: instruction) (dr: data_resource) (g: genv) (ars: allregs
     end.
 
 
+(*Comparisons disabled for runtime reasons*)
+(*Compcert pseudo-instructions disabled - will try to implement them soon*)
 Definition disabled_instr(i: instruction): Prop :=
     match i with
     | Pbc _ _ _ => True
@@ -1739,6 +1742,11 @@ Definition disabled_instr(i: instruction): Prop :=
     | Ptst _ _ _ _ _ => True
     | Pfcmp _ _ _ _ => True
     | Pfcmp0 _ _ _ => True
+    | Pallocframe _ _ _ => True
+    | Pfreeframe _ _ _ => True
+    | Plabel _ _ => True
+    | Ploadsymbol _ _ _ => True
+    | Pbuiltin _ _ _ _ => True
     | _ => False
     end.
 
@@ -1925,6 +1933,60 @@ Remark destruct_some: forall (A: Type) (a b: A), a = b -> Some a = Some b.
 intros. subst. reflexivity.
 Qed.
 
+Remark cmpu_valid_ptr: forall m_i m_1 c vc1 vc2 o,
+   Val.cmpu_bool (Mem.valid_pointer m_i) c vc1  vc2 = o -> Val.cmpu_bool (Mem.valid_pointer m_1) c vc1 vc2 = o.
+Proof.
+    intros. unfold Val.cmpu_bool in *. destruct o.
+    - destruct vc1; destruct vc2; try discriminate. apply H.
+    -destruct vc1; destruct vc2; try reflexivity. apply H. 
+Qed.
+
+Remark cmplu_valid_ptr: forall m_i m_1 c vc1 vc2 o vwa vwv ch,
+   Val.cmplu_bool (Mem.valid_pointer m_i) c vc1  vc2 = o -> 
+   Mem.storev ch m_i vwa vwv = Some m_1 -> Val.cmplu_bool (Mem.valid_pointer m_1) c vc1 vc2 = o.
+Proof.
+    intros. pose H0 as Hptr. apply store_ptrs in Hptr. destruct vwa; try discriminate.
+    unfold Mem.storev in H0.
+    unfold Val.cmplu_bool in *. destruct o.
+    - destruct vc1; destruct vc2; try discriminate. apply H.
+        destruct (negb Archi.ptr64) eqn: n; try discriminate;
+        rewrite <- Mem.store_preserves_valid_ptr_tof with (chunk := ch)(b := b)(ofs := Ptrofs.unsigned i)(v := vwv)(m := m_i);
+        try rewrite <- Mem.store_preserves_valid_ptr_tof with (chunk := ch)(b := b)(ofs := Ptrofs.unsigned i)(v := vwv)(m' := m_1)(m := m_i); assumption.
+       
+        destruct (negb Archi.ptr64) eqn: n; try discriminate;
+        rewrite <- Mem.store_preserves_valid_ptr_tof with (chunk := ch)(b := b)(ofs := Ptrofs.unsigned i)(v := vwv)(m := m_i);
+        try rewrite <- Mem.store_preserves_valid_ptr_tof with (chunk := ch)(b := b)(ofs := Ptrofs.unsigned i)(v := vwv)(m' := m_1)(m := m_i); assumption.
+
+        destruct (negb Archi.ptr64) eqn: n; try discriminate;
+        rewrite <- Mem.store_preserves_valid_ptr_tof with (chunk := ch)(b := b)(ofs := Ptrofs.unsigned i)(v := vwv)(m := m_i);
+        try rewrite <- Mem.store_preserves_valid_ptr_tof with (chunk := ch)(b := b)(ofs := Ptrofs.unsigned i)(v := vwv)(m' := m_1)(m := m_i); 
+        try rewrite <- Mem.store_preserves_valid_ptr_tof with (chunk := ch)(b := b)(ofs := Ptrofs.unsigned i)(v := vwv)(m' := m_1)(m := m_i);
+        try rewrite <- Mem.store_preserves_valid_ptr_tof with (chunk := ch)(b := b)(ofs := Ptrofs.unsigned i)(v := vwv)(m' := m_1)(m := m_i);
+
+        assumption.
+    - destruct vc1; destruct vc2; try reflexivity; try discriminate.
+    destruct (negb Archi.ptr64) eqn: n; try discriminate;
+    rewrite <- Mem.store_preserves_valid_ptr_tof with (chunk := ch)(b := b)(ofs := Ptrofs.unsigned i)(v := vwv)(m := m_i);
+    try rewrite <- Mem.store_preserves_valid_ptr_tof with (chunk := ch)(b := b)(ofs := Ptrofs.unsigned i)(v := vwv)(m' := m_1)(m := m_i); 
+    try rewrite <- Mem.store_preserves_valid_ptr_tof with (chunk := ch)(b := b)(ofs := Ptrofs.unsigned i)(v := vwv)(m' := m_1)(m := m_i);
+    try rewrite <- Mem.store_preserves_valid_ptr_tof with (chunk := ch)(b := b)(ofs := Ptrofs.unsigned i)(v := vwv)(m' := m_1)(m := m_i);
+    assumption.
+
+    destruct (negb Archi.ptr64) eqn: n; try discriminate;
+    rewrite <- Mem.store_preserves_valid_ptr_tof with (chunk := ch)(b := b)(ofs := Ptrofs.unsigned i)(v := vwv)(m := m_i);
+    try rewrite <- Mem.store_preserves_valid_ptr_tof with (chunk := ch)(b := b)(ofs := Ptrofs.unsigned i)(v := vwv)(m' := m_1)(m := m_i); 
+    try rewrite <- Mem.store_preserves_valid_ptr_tof with (chunk := ch)(b := b)(ofs := Ptrofs.unsigned i)(v := vwv)(m' := m_1)(m := m_i);
+    try rewrite <- Mem.store_preserves_valid_ptr_tof with (chunk := ch)(b := b)(ofs := Ptrofs.unsigned i)(v := vwv)(m' := m_1)(m := m_i);
+    assumption.
+
+    destruct (negb Archi.ptr64) eqn: n; try discriminate;
+    rewrite <- Mem.store_preserves_valid_ptr_tof with (chunk := ch)(b := b)(ofs := Ptrofs.unsigned i)(v := vwv)(m := m_i);
+    try rewrite <- Mem.store_preserves_valid_ptr_tof with (chunk := ch)(b := b)(ofs := Ptrofs.unsigned i)(v := vwv)(m' := m_1)(m := m_i); 
+    try rewrite <- Mem.store_preserves_valid_ptr_tof with (chunk := ch)(b := b)(ofs := Ptrofs.unsigned i)(v := vwv)(m' := m_1)(m := m_i);
+    try rewrite <- Mem.store_preserves_valid_ptr_tof with (chunk := ch)(b := b)(ofs := Ptrofs.unsigned i)(v := vwv)(m' := m_1)(m := m_i);
+    assumption.
+Qed. 
+
 (* Remark different_address_different_resource:  
 ~(exists r : data_resource, data_res_eq ?d1 r /\ data_res_eq (SingleReg ?pid2 (preg_of_iregsp ?rd2)) r) -> rd1 <> rd2.  *)
 
@@ -1947,6 +2009,7 @@ match goal with
     H_st: Mem.storev ?t2 ?m_i ?vwa ?vwv = Some ?m1 |- _] => assert (Mem.loadv t m1 v = Mem.loadv t m_i v);
                                                 (pose H_l1 as ptr1; apply load_ptrs in ptr1) + (pose H_l2 as ptr1; apply load_ptrs in ptr1); destruct v; try contradiction;
                                             pose H_st as ptr2; apply store_ptrs in ptr2; destruct vwa; try contradiction; [breakdown_mem | idtac]
+| _ => idtac
 end.
 
 Ltac reorder_solver :=
@@ -2059,12 +2122,26 @@ Ltac reorder_solver :=
     | [|- EWmap.set ?A ?v1 (EWmap.set ?B ?v2 (EWmap.set ?C ?v3 ?mi)) = EWmap.set ?B ?v2 (EWmap.set ?C ?v3 (EWmap.set ?A ?v1 ?mi))] => symmetry; rewrite <- EWmap.gscsc_ext; try reflexivity; reorder_solver (* Nonterminal*)
     | [|- EWmap.set ?w ?v2 (EWmap.set ?x ?v3 (EWmap.set ?y ?v4 (EWmap.set ?z ?v5 ?m))) = EWmap.set ?y ?v4 (EWmap.set ?z ?v5 (EWmap.set ?w ?v2 (EWmap.set ?x ?v3 ?m)))] => rewrite <- EWmap.gscsc_2of4; try reflexivity; reorder_solver (* Nonterminal*)  
     | [|- context[EWmap.set ?k1 _ ?map ?k2]] => rewrite EWmap.gso; reorder_solver (* Nonterminal *)
+    (*different comparisons*)
+    | [H1: Val.cmplu_bool (Mem.valid_pointer ?m1) ?b ?c ?d = ?o1,
+       H2: Val.cmplu_bool (Mem.valid_pointer ?m2) ?b ?c ?d = ?o2,
+       H_set: Mem.storev ?t ?m1 ?sa ?sv = Some ?m2 |- _] => apply cmplu_valid_ptr with (m_i := m1)(m_1 := m2) (vwa := sa) (vwv := sv)(ch := t)  in H1; reorder_solver
+    | [H1: Val.cmpu_bool (Mem.valid_pointer ?m1) ?b ?c ?d = ?o1,
+       H2: Val.cmpu_bool (Mem.valid_pointer ?m2) ?b ?c ?d = ?o2 |- _] => apply cmpu_valid_ptr with (m_1 := m2) in H1; reorder_solver
     (*call auxilary mewory ltac*)
     | [H_l1: Mem.loadv ?t ?m_i ?v = _, 
     H_l2: Mem.loadv ?t ?m1 ?v = _, 
     H_st: Mem.storev ?t2 ?m_i ?vwa ?vwv = Some ?m1 |- _] => breakdown_mem; reorder_solver
     | _ => try reflexivity
 end.
+
+(* Remark cmpu_valid_ptr: forall m_i m_1 c vc1 vc2 vsa vsv b t,
+    Mem.storev t m_i vsa vsv = Some m_1 -> Val.cmpu_bool (Mem.valid_pointer m_i) c vc1  vc2 = Some b -> Val.cmpu_bool (Mem.valid_pointer m_1) c vc1 vc2 = Some b.
+Proof.
+    intros. destruct vc1; destruct vc2;
+    unfold Val.cmpu_bool in *; try discriminate. apply H0.
+Qed. *)
+
 
 
 
@@ -2080,149 +2157,43 @@ Proof. intros.
 (* Definition unwrapping*)
 unfold data_dependence in H. unfold data_sink, data_source in H. apply not_or_or_and in H. destruct H.  destruct H2. destruct i1.
 
-Focus 12. destruct i2. Focus 12. disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver. auto.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+Focus 23. 
+destruct i2.
+disable_cmps; unfold output_data_eq; unfold input_code_race_free in *; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request;  unfold early_ack_write; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold input_code_race_free in *; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request;  unfold early_ack_write; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold input_code_race_free in *; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request;  unfold early_ack_write; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold input_code_race_free in *; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request;  unfold early_ack_write; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold input_code_race_free in *; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request;  unfold early_ack_write; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold input_code_race_free in *; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request;  unfold early_ack_write; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold input_code_race_free in *; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request;  unfold early_ack_write; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold input_code_race_free in *; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request;  unfold early_ack_write; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold input_code_race_free in *; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request;  unfold early_ack_write; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold input_code_race_free in *; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request;  unfold early_ack_write; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold input_code_race_free in *; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request;  unfold early_ack_write; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold input_code_race_free in *; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request;  unfold early_ack_write; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold input_code_race_free in *; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request;  unfold early_ack_write; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold input_code_race_free in *; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request;  unfold early_ack_write; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold input_code_race_free in *; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request;  unfold early_ack_write; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold input_code_race_free in *; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request;  unfold early_ack_write; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold input_code_race_free in *; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request;  unfold early_ack_write; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold input_code_race_free in *; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request;  unfold early_ack_write; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold input_code_race_free in *; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request;  unfold early_ack_write; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold input_code_race_free in *; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request;  unfold early_ack_write; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold input_code_race_free in *; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request;  unfold early_ack_write; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold input_code_race_free in *; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request;  unfold early_ack_write; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
 
-disable_cmps; unfold output_data_eq; unfold input_code_race_free in *; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *. destruct matches. 
-
-apply four_and_shortcut; reorder_solver.
-apply four_and_shortcut; reorder_solver.
-reorder_solver.
-reorder_solver.
-reorder_solver.
-reorder_solver.
-reorder_solver.
-reorder_solver.
-reorder_solver.
-reorder_solver.
-reorder_solver.
-
-(* Ltac breakdown_mem :=
-match goal with
-| [ H_tx1: ?ifmo_p ?tx1 = Some (Vptr ?bl ?il, ?vtx0, ?t1),
-    H_tx2: ?ifmo_p ?tx2 = Some (Vptr ?bs ?is, ?vtx2, ?c2),
-    no_race: forall (txid1 txid2 : mem_transaction_id) (v1 v2 v3 v4 : val)
-            (ifmo : in_flight_mem_ops) (c1 c2 : memory_chunk),
-            txid1 <> txid2 ->
-            ifmo txid1 = Some (v1, v3, c1) ->
-            ifmo txid2 = Some (v2, v4, c2) -> ~ memory_conflict c1 c2 v1 v2,
-    H_st: Mem.storev ?c2 ?m_i (Vptr ?bs ?is) ?vwv = Some ?m1
-         |- Mem.loadv ?t ?m1 (Vptr ?bl ?il) = Mem.loadv ?t ?m_i (Vptr ?bl ?il)]
-         =>  apply Mem.ld_str_gso with (v2 := vwv)(b3 := bs)(o3 := is)(t2 := c2); [apply expand_memory_conflict; apply no_race with (txid1 := tx1)(txid2 := tx2)(v3 := vtx0)(v4 := vtx2)(ifmo := ifmo_p); assumption | assumption] 
-|   [H_l1: Mem.loadv ?t ?m_i ?v = _, 
-    H_l2: Mem.loadv ?t ?m1 ?v = _, 
-    H_st: Mem.storev ?t2 ?m_i ?vwa ?vwv = Some ?m1 |- _] => assert (Mem.loadv t m1 v = Mem.loadv t m_i v);
-                                                (pose H_l1 as ptr1; apply load_ptrs in ptr1) + (pose H_l2 as ptr1; apply load_ptrs in ptr1); destruct v; try contradiction;
-                                            pose H_st as ptr2; apply store_ptrs in ptr2; destruct vwa; try contradiction; [breakdown_mem | idtac]
-end. *)
-
-reorder_solver.
-reorder_solver.
-(*
-
- apply Mem.ld_str_gso with (v2 := vwv)(b3 := bs)(o3 := is)(t2 := t2)
-
- b <> ?b3 \/
-Ptrofs.unsigned i + size_chunk m <= Ptrofs.unsigned ?o3 \/
-Ptrofs.unsigned ?o3 + size_chunk ?t2 <= Ptrofs.unsigned i
+disable_cmps; unfold output_data_eq; unfold input_code_race_free in *; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request;  unfold early_ack_write; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold input_code_race_free in *; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request;  unfold early_ack_write; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold input_code_race_free in *; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request;  unfold early_ack_write; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold input_code_race_free in *; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request;  unfold early_ack_write; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold input_code_race_free in *; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request;  unfold early_ack_write; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold input_code_race_free in *; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request;  unfold early_ack_write; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold input_code_race_free in *; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request;  unfold early_ack_write; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold input_code_race_free in *; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request;  unfold early_ack_write; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
+disable_cmps; unfold output_data_eq; unfold input_code_race_free in *; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request;  unfold early_ack_write; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
 
 
-b <> b0 \/
-Ptrofs.unsigned i + size_chunk m <= Ptrofs.unsigned i0 \/
-Ptrofs.unsigned i0 + size_chunk m2 <= Ptrofs.unsigned i
 
-*)
-reorder_solver.
-reorder_solver.
-
-reorder_solver.
-
-
- 
-reorder_solver.
-reorder_solver.
-reorder_solver.
-reorder_solver.
-reorder_solver.
-reorder_solver.
-
-reorder_solver.
-reorder_solver.
-reorder_solver.
-
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver.
-
-
-admit.
-admit.
-admit.
-admit.
-admit.
-admit.
-destruct i2; disable_cmps; unfold output_data_eq; unfold eval_memsim_instr; unfold eval_memsim_instr_internal; unfold eval_testcond; unfold goto_label; unfold serialize_read; unfold read_ack; unfold serialize_write; unfold write_ack; unfold compare_int; unfold compare_float; unfold compare_long; unfold compare_single; unfold read_request; unfold eval_addressing; unfold eval_testzero; unfold iregz_same_resource in *; destruct matches; reorder_solver. auto.
-auto.
 
 
 Qed. 

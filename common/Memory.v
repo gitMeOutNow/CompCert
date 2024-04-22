@@ -37,6 +37,7 @@ Require Import AST.
 Require Import Integers.
 Require Import Floats.
 Require Import Values.
+Require Import Arith.
 Require Export Memdata.
 Require Export Memtype.
 
@@ -492,7 +493,7 @@ Remark getN_setN_same:
   getN (length vl) p (setN vl p c) = vl.
 Proof.
   induction vl; intros; simpl.
-  auto.
+  auto. 
   decEq.
   rewrite setN_outside. apply ZMap.gss. lia.
   apply IHvl.
@@ -509,7 +510,7 @@ Qed.
 
 Remark getN_setN_disjoint:
   forall vl q c n p,
-  Intv.disjoint (p, p + Z.of_nat n) (q, q + Z.of_nat (length vl)) ->
+  Intv.disjoint (p, p + Z.of_nat n) (q, q + Z.of_nat (length vl)) -> 
   getN n p (setN vl q c) = getN n p c.
 Proof.
   intros. apply getN_exten. intros. apply setN_other.
@@ -640,6 +641,14 @@ Theorem valid_access_load:
 Proof.
   intros. econstructor. unfold load. rewrite pred_dec_true; eauto.
 Qed.
+
+Theorem invalid_access_load:
+  forall m chunk b ofs,
+  ~ valid_access m chunk b ofs Readable ->
+  load chunk m b ofs = None.
+  Proof.
+    intros. unfold load. rewrite pred_dec_false; auto.
+  Qed.
 
 Theorem load_valid_access:
   forall m chunk b ofs v,
@@ -1026,12 +1035,20 @@ Proof.
   intros. inv H. constructor; try red; auto with mem.
 Qed.
 
+
 Theorem store_valid_access_2:
   forall chunk' b' ofs' p,
   valid_access m2 chunk' b' ofs' p -> valid_access m1 chunk' b' ofs' p.
 Proof.
   intros. inv H. constructor; try red; auto with mem.
 Qed.
+
+Theorem store_invalid_access_1:
+  forall chunk' b' ofs' p,
+  ~ valid_access m1 chunk' b' ofs' p -> ~ valid_access m2 chunk' b' ofs' p.
+Proof.
+  intros. unfold not. intro. apply store_valid_access_2 in H0. contradiction.
+  Qed.
 
 Theorem store_valid_access_3:
   valid_access m1 chunk b ofs Writable.
@@ -4433,6 +4450,39 @@ Proof.
   elim (H0 ofs0). lia. auto.
 Qed.
 
+Lemma store_preserves_valid_ptr:
+  forall chunk m b ofs v m' b1 ofs1,
+  store chunk m b ofs v = Some m' ->
+  valid_pointer m b1 ofs1 = true -> valid_pointer m' b1 ofs1 = true.
+Proof.
+intros.
+
+rewrite <- H0.
+
+unfold valid_pointer. unfold perm_dec. Unset Printing Notations.
+
+pose H as sdup. apply store_valid_access_3 in sdup.
+unfold store in H. rewrite pred_dec_true in H. inv H. simpl. reflexivity.
+
+apply sdup.
+Qed.
+
+
+Lemma store_preserves_valid_ptr_tof:
+  forall chunk m b ofs v m' b1 ofs1,
+  store chunk m b ofs v = Some m' ->
+  valid_pointer m b1 ofs1 = valid_pointer m' b1 ofs1.
+Proof.
+intros.
+
+unfold valid_pointer. unfold perm_dec.
+
+pose H as sdup. apply store_valid_access_3 in sdup.
+unfold store in H. rewrite pred_dec_true in H. inv H. simpl. reflexivity.
+
+apply sdup.
+Qed.
+
 Lemma storebytes_unchanged_on:
   forall m b ofs bytes m',
   storebytes m b ofs bytes = Some m' ->
@@ -4527,7 +4577,6 @@ Remark vptr_ne:
   Qed.        
 
 
-(*maybe not needed?*)
 Theorem ld_str_gso: forall (v2: val) b1 o1 b3 o3 t1 t2 (m m': mem),
   b1 <> b3 \/ (Ptrofs.unsigned o1 + size_chunk t1 <= Ptrofs.unsigned o3 \/
   Ptrofs.unsigned o3 + size_chunk t2 <= Ptrofs.unsigned o1)  -> storev t2 m (Vptr b3 o3) v2 = Some m' -> loadv t1 m' (Vptr b1 o1) = loadv t1 m (Vptr b1 o1).
@@ -4535,6 +4584,173 @@ Proof.
   intros.
   eapply load_store_other; eauto.
  Qed.
+
+Definition mem_extensional(m1 m2: mem): Prop := forall (b: block) (ofs: ptrofs), load Mint8unsigned m1 b (Ptrofs.unsigned ofs) = load Mint8unsigned m2 b (Ptrofs.unsigned ofs).
+
+Remark mem_self_extensional: forall m, mem_extensional m m.
+Proof.
+  intros. unfold mem_extensional. intros. reflexivity.
+Qed.
+
+Remark mem_eq_extensional: forall m1 m2, m1 = m2 -> mem_extensional m1 m2.
+Proof.
+  intros. unfold mem_extensional. intros. rewrite H. reflexivity.
+Qed.
+
+Remark invert_chunk_conversion: forall t1,
+  size_chunk t1 = Z.of_nat (size_chunk_nat t1).
+  Proof.
+    intros. destruct t1; simpl; reflexivity.
+  Qed.
+
+Remark get_setN_similar:
+  forall vl p c1 c2 vi,
+  p <= vi < p + Z.of_nat (length vl) ->
+  ZMap.get vi (setN vl p c1) = ZMap.get vi (setN vl p c2).
+Proof.
+  induction vl; intros; simpl. simpl in H. lia.
+  destruct ( Z.eq_dec vi p). subst. rewrite setN_outside. rewrite setN_outside. rewrite ZMap.gss. rewrite ZMap.gss. reflexivity.
+        lia. lia.
+  apply IHvl. destruct H. simpl in H0. intuition. 
+Qed.
+
+Lemma get_set_set_disjoint: forall n_read read_address vl1 wa1 vl2 wa2 m,
+read_address + Z.of_nat n_read <= wa2 \/
+wa2 + (Z.of_nat (length vl2)) <= read_address ->
+getN (n_read) (read_address)
+(setN (vl1) (wa1)
+   (setN vl2 wa2 m)) = getN (n_read) read_address (setN vl1 wa1 m).
+Proof.
+
+induction n_read. intros; simpl. reflexivity.
+
+intros. simpl. decEq.
+- (*deconstruct to see if our data source is from map or from vl1*)
+(*true, true - start is before read address, end is before - out of range*)
+(*true, false - start is before, end is after - read from vl1*)
+(*false, true - impossible*)
+(*false, false, out of range*)
+destruct (Z.leb wa1 read_address) eqn: B1;
+destruct (Z.leb (wa1 + Z.of_nat (length vl1)) read_address) eqn: B2.
++ apply Z.leb_le in B1, B2.  rewrite setN_other. rewrite setN_other. rewrite setN_other. reflexivity. lia. lia. lia.
++   induction vl2. simpl. reflexivity.
+  simpl. apply get_setN_similar. lia. 
++ apply Z.leb_le in B2. apply Z.leb_gt in B1.  lia.
++ apply Z.leb_gt in B1, B2. rewrite setN_other. rewrite setN_other. rewrite setN_other. reflexivity. lia. lia. lia.
+-apply IHn_read. lia.
+Qed. 
+
+Theorem str_str_comm: forall (m_i m_t1 m_t2 m_f1 m_f2: mem) (b1 b2: block)(o1 o2: ptrofs) (sv1 sv2: val) (t1 t2: memory_chunk), 
+ b1 <> b2 \/ (Ptrofs.unsigned o1 + size_chunk t1 <= Ptrofs.unsigned o2 \/ Ptrofs.unsigned o2 + size_chunk t2 <= Ptrofs.unsigned o1)
+  -> storev t1 m_i (Vptr b1 o1) sv1 = Some m_t1 
+  -> storev t2 m_i (Vptr b2 o2) sv2 = Some m_t2 
+  -> storev t2 m_t1 (Vptr b2 o2) sv2 = Some m_f1 
+  -> storev t1 m_t2 (Vptr b1 o1) sv1 = Some m_f2 
+  -> mem_extensional m_f1 m_f2.
+ Proof.
+  intros.
+
+
+  unfold storev in *.
+  (* pose H2 as store_v_dup_1. apply store_valid_access_3 in store_v_dup_1. *)
+  
+  (* pose H0 as store_dup_0. apply store_unchanged_on with (P := fun b_in ofs1 => (b_in <> b1 \/ Ptrofs.unsigned o1 > ofs1  \/ ofs1 >= Ptrofs.unsigned o1 + size_chunk t1 )) in store_dup_0. *)
+  (* pose H1 as store_dup_1. apply store_unchanged_on with (P := fun b_in ofs1 => (b_in <> b2 \/ Ptrofs.unsigned o2 > ofs1  \/ ofs1 >= Ptrofs.unsigned o2 + size_chunk t2 )) in store_dup_1. *)
+  (* pose H2 as store_dup_2. apply store_unchanged_on with (P := fun b_in ofs1 => (b_in <> b2 \/ Ptrofs.unsigned o2 > ofs1  \/ ofs1 >= Ptrofs.unsigned o2 + size_chunk t2 )) in store_dup_2.
+  pose H3 as store_dup_3. apply store_unchanged_on with (P := fun b_in ofs1 => (b_in <> b1 \/ Ptrofs.unsigned o1 > ofs1  \/ ofs1 >= Ptrofs.unsigned o1 + size_chunk t1 )) in store_dup_3. *)
+  pose H0 as store_dup_0.
+  pose H1 as store_dup_1.
+  pose H2 as store_dup_2.
+  pose H3 as store_dup_3.
+
+  unfold mem_extensional. intros.
+
+  destruct (valid_access_dec m_i Mint8unsigned b (Ptrofs.unsigned ofs) Readable).
+  apply store_valid_access_1 with (chunk' := Mint8unsigned)(b' := b)(ofs' := Ptrofs.unsigned ofs)(p := Readable) in store_dup_0; try assumption.
+  apply store_valid_access_1 with (chunk' := Mint8unsigned)(b' := b)(ofs' := Ptrofs.unsigned ofs)(p := Readable) in store_dup_1; try assumption.
+  apply store_valid_access_1 with (chunk' := Mint8unsigned)(b' := b)(ofs' := Ptrofs.unsigned ofs)(p := Readable) in store_dup_2; try assumption.
+  apply store_valid_access_1 with (chunk' := Mint8unsigned)(b' := b)(ofs' := Ptrofs.unsigned ofs)(p := Readable) in store_dup_3; try assumption.
+
+
+  unfold store in *.
+  rewrite pred_dec_true in H1, H0, H2, H3.
+  unfold load. 
+
+  rewrite pred_dec_true.
+  rewrite pred_dec_true.
+
+  f_equal. f_equal.
+  inv H3. inv H2. inv H0. inv H1. Opaque getN. simpl.
+  (*main goals*)
+  +
+  (*destruct on if blocks are same as witness*)
+  destruct (eq_block b b1); destruct (eq_block b b2).  subst. simpl.
+  (*all blocks same - hard case, have to deconstruct on offsets*)
+  -
+  (* destruct on if our witness is within the bounds of the first write *)
+  destruct (Z.leb ((Ptrofs.unsigned o1) + Z.of_nat (size_chunk_nat t1))(Ptrofs.unsigned ofs)) eqn: B1_R; apply Z.leb_le in B1_R +  apply Z.leb_gt in B1_R;
+  destruct (Z.ltb ((Ptrofs.unsigned ofs)) (Ptrofs.unsigned o1)) eqn: B1_L;  apply Z.ltb_lt in B1_L + apply Z.ltb_ge in B1_L;
+  (*destruct if witness is within the bounds of the second write*)
+  destruct (Z.leb ((Ptrofs.unsigned o2) + Z.of_nat (size_chunk_nat t2))(Ptrofs.unsigned ofs)) eqn: B2_R; apply Z.leb_le in B2_R + apply Z.leb_le in B2_R + apply Z.leb_gt in B2_R;
+  destruct (Z.ltb ((Ptrofs.unsigned ofs)) (Ptrofs.unsigned o2)) eqn: B2_L; apply Z.ltb_lt in B2_L + apply Z.ltb_ge in B2_L;
+  (*no contradictions exist yet in offset relations*)
+  (* get rid of all of the block stuff, convert to raw setN*)
+  rewrite PMap.gss; rewrite PMap.gss; rewrite PMap.gss; rewrite PMap.gss; try rewrite encode_val_length.  
+  (*repeatedly apply getset outside, prove that the combination of bound parameters + disjoint hypo*)
+  (* if B*_L and B*_R are both flipped for one set, then our witness is inside of our boundary*)
+  (* if they're both flipped for both, this is a contradiction with our original premise*)
+  rewrite getN_setN_outside. rewrite getN_setN_outside. rewrite getN_setN_outside. rewrite getN_setN_outside. reflexivity. lia.  lia. lia. lia.
+  
+  rewrite getN_setN_outside. rewrite getN_setN_outside. rewrite getN_setN_outside. rewrite getN_setN_outside. reflexivity.
+  rewrite encode_val_length. lia. lia. lia. rewrite encode_val_length; right; assumption.
+
+  rewrite getN_setN_outside. rewrite getN_setN_outside. rewrite getN_setN_outside. rewrite getN_setN_outside. reflexivity.
+  rewrite encode_val_length. lia. lia. lia. lia.
+
+  rewrite get_set_set_disjoint. rewrite getN_setN_outside with (vl := (encode_val t1 sv1)). reflexivity. lia.  lia.
+  rewrite get_set_set_disjoint. rewrite getN_setN_outside with (vl := (encode_val t1 sv1)). reflexivity. lia. lia.
+  
+  rewrite getN_setN_outside; try rewrite encode_val_length;  try lia. rewrite getN_setN_outside; try rewrite encode_val_length;  try lia. rewrite getN_setN_outside; try rewrite encode_val_length;  try lia. rewrite getN_setN_outside; try rewrite encode_val_length;  try lia. reflexivity.
+  rewrite getN_setN_outside; try rewrite encode_val_length;  try lia. rewrite getN_setN_outside; try rewrite encode_val_length;  try lia. rewrite getN_setN_outside; try rewrite encode_val_length;  try lia. rewrite getN_setN_outside; try rewrite encode_val_length;  try lia. reflexivity. simpl. lia. simpl. lia.
+
+  rewrite get_set_set_disjoint; try rewrite encode_val_length; try lia. rewrite getN_setN_outside with (vl := (encode_val t1 sv1)). reflexivity. rewrite encode_val_length; lia. 
+  rewrite getN_setN_outside; try rewrite encode_val_length;  try lia. rewrite getN_setN_outside; try rewrite encode_val_length;  try lia. rewrite getN_setN_outside; try rewrite encode_val_length. rewrite getN_setN_outside; try rewrite encode_val_length;  try lia. rewrite getN_setN_outside. reflexivity. simpl. rewrite encode_val_length. lia. simpl. lia. simpl. lia.
+  rewrite getN_setN_outside; try rewrite encode_val_length; simpl;  try lia. rewrite getN_setN_outside; try rewrite encode_val_length; simpl; try lia. rewrite getN_setN_outside; try rewrite encode_val_length; simpl;  try lia. rewrite getN_setN_outside; try rewrite encode_val_length; simpl;  try lia. reflexivity.
+  rewrite get_set_set_disjoint; simpl; try lia. rewrite getN_setN_outside with (vl := encode_val t1 sv1). reflexivity. simpl. lia. 
+
+  rewrite getN_setN_outside. rewrite getN_setN_outside; try rewrite encode_val_length; simpl; try lia. simpl. lia. 
+  rewrite getN_setN_outside; try lia. rewrite get_set_set_disjoint; try rewrite encode_val_length; try lia. reflexivity. simpl. rewrite encode_val_length. lia.
+  rewrite getN_setN_outside; try rewrite encode_val_length; simpl; try lia. rewrite get_set_set_disjoint; try rewrite encode_val_length; simpl; try lia. reflexivity.
+
+  
+  (* rewrite getN_setN_outside; try rewrite encode_val_length; try lia. rewrite get_set_set_disjoint; try rewrite encode_val_length; try lia. reflexivity. simpl. lia. *)
+
+  exfalso. destruct H as [H_BnE | H_OnE]. intuition.
+  destruct H_OnE as [H_fl | H_fr]; rewrite <- invert_chunk_conversion in B1_R, B2_R; lia.
+
+
+
+  
+
+   (*easy cases - not all blocks are the same*)
+  - subst. rewrite PMap.gss. rewrite PMap.gso. rewrite PMap.gss. rewrite PMap.gso. reflexivity. assumption. assumption.
+  - subst. rewrite PMap.gss. rewrite PMap.gso. rewrite PMap.gso. rewrite PMap.gss. reflexivity. assumption. assumption.  (*good case - witness differs from the other blocks, so we can just ignore offset stuff *)
+  - rewrite PMap.gso. rewrite PMap.gso. rewrite PMap.gso. rewrite PMap.gso. reflexivity. all: assumption.
+  + assumption.
+  + assumption.
+  + apply store_valid_access_3 in H3. assumption.
+  + apply store_valid_access_3 in H2. assumption.
+  + apply store_valid_access_3 in H0. assumption.
+  + apply store_valid_access_3 in H1. assumption.
+  + apply store_invalid_access_1 with  (chunk' := Mint8unsigned)(b' := b)(ofs' := Ptrofs.unsigned ofs)(p := Readable) in store_dup_0; try assumption.
+    apply store_invalid_access_1 with  (chunk' := Mint8unsigned)(b' := b)(ofs' := Ptrofs.unsigned ofs)(p := Readable) in store_dup_1; try assumption.
+    apply store_invalid_access_1 with  (chunk' := Mint8unsigned)(b' := b)(ofs' := Ptrofs.unsigned ofs)(p := Readable) in store_dup_2; try assumption.
+    apply store_invalid_access_1 with  (chunk' := Mint8unsigned)(b' := b)(ofs' := Ptrofs.unsigned ofs)(p := Readable) in store_dup_3; try assumption.
+
+  unfold load. rewrite pred_dec_false. rewrite pred_dec_false. reflexivity. assumption. assumption.
+  Qed.
+
+
 
   End Mem.
 

@@ -35,6 +35,7 @@
 *)
 
 Require Import Coqlib.
+Require Import Axioms.
 
 (* To avoid useless definitions of inductors in extracted code. *)
 Local Unset Elimination Schemes.
@@ -1373,6 +1374,18 @@ Module IMap(X: INDEXED_TYPE).
     intros. unfold set. apply PMap.set2.
   Qed.
 
+  Lemma gscsc:
+    forall (A: Type) (m: t A) (x y: elt) (v1 v2: A),
+    x <> y ->
+    set x v1 (set y v2 m) = set y v2 (set x v1 m).
+    Proof.
+      intros. unfold set.
+      unfold PMap.set.
+      unfold PTree.set. simpl.
+      destruct (snd m). unfold PTree.set'. rewrite Axioms.functional_extensionality. destruct p.
+      apply Axioms.functional_extensionality.
+      destruct (X.index x). )
+
 End IMap.
 
 Module ZIndexed.
@@ -1470,8 +1483,6 @@ Module EMap(X: EQUALITY_TYPE) <: MAP.
   Proof.
     intros. unfold get, map. reflexivity.
   Qed.
-  Axiom functional_extensionality : forall {X Y: Type} {f g : X -> Y},
-  (forall (x:X), f x = g x) -> f = g.
 
 (* conditional set commutativity*)
 Theorem gscsc :
@@ -1480,7 +1491,7 @@ Theorem gscsc :
   set x v1 (set y v2 m) = set y v2 (set x v1 m).
 Proof.
   intros A m x y v1 v2 Hneq.
-  apply functional_extensionality.
+  apply Axioms.functional_extensionality.
   intros z.              
   unfold set.
   destruct (X.eq z x) as [Hzx|Hzx].
@@ -1524,7 +1535,7 @@ Qed.
 Theorem gscsc_2of4: forall(A: Type)(m: t A) (m: t A) (w x y z: elt)(v2 v3 v4 v5:A),
 z <> x -> z <> w -> y <> x -> y <> w ->  set w v2 (set x v3 (set y v4 (set z v5 m))) = set y v4 ( set z v5  (set w v2 (set x v3 m))).
 intros. 
-apply functional_extensionality.
+apply Axioms.functional_extensionality.
 intros.
 unfold set.
 destruct (X.eq x0 w), (X.eq x0, x), (X.eq x0, y), (X.eq x0, z); try reflexivity; try contradiction.
@@ -1552,7 +1563,7 @@ Theorem gscsc_1of5:
     Theorem gscsc_2of5: forall(A: Type)(m: t A) (m: t A) (q w x y z: elt)(v1 v2 v3 v4 v5:A),
     x <> q -> x <> w -> y <> q -> y <> w -> z <> q -> z <> w ->  set q v1 (set w v2 (set x v3 (set y v4 (set z v5 m)))) = set x v3 (set y v4 ( set z v5 (set q v1 (set w v2 m)))).
     intros. 
-    apply functional_extensionality.
+    apply Axioms.functional_extensionality.
     intros.
     unfold set.
     destruct (X.eq x0 q), (X.eq x0 w), (X.eq x0, x), (X.eq x0, y), (X.eq x0, z); try reflexivity; try contradiction.
