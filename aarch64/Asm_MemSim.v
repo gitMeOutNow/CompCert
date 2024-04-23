@@ -1871,8 +1871,11 @@ Definition output_data_eq (o1 o2: outcome): Prop :=
 Remark reduce_ors_1: ~(True \/ True) -> False.
 Proof. intuition. Qed.
 
-Definition input_code_race_free: Prop := forall (txid1 txid2: mem_transaction_id)(v1 v2 v3 v4: val)(ifmo: in_flight_mem_ops)(c1 c2: memory_chunk),
-    txid1 <> txid2 -> ifmo txid1 = (Some (v1, v3, c1))  -> ifmo txid2 = (Some (v2, v4, c2))  ->  ~(memory_conflict c1 c2 v1 v2).
+(* we introduced this so that we'd know two txids not conflict with serialization*)
+(* if we remove the ability for serializes to permute, then we don't need this. *)
+(*at a high level, this means that this serialization is happening in program order*)
+Definition input_code_race_free (ifmo: in_flight_mem_ops): Prop := forall (txid1 txid2: mem_transaction_id)(v1 v2 v3 v4: val)(c1 c2: memory_chunk),
+    txid1 <> txid2 -> ifmo txid1 = (Some (v1, v3, c1))  -> ifmo txid2 = (Some (v2, v4, c2)) ->  ~(memory_conflict c1 c2 v1 v2).
 
 Remark reduce_ors_2: ~(True \/ False) -> False.
 Proof. intuition. Qed.
@@ -2064,14 +2067,14 @@ Ltac reorder_solver :=
         H_2: Mem.storev ?m1 ?m0 ?v1 ?v2 = Some ?m2  |- False] => apply Mem.store_validity_1 with (m := m) (m_i := m_i) (v := v) (v0 := v0) (v1 := v1) (v2 := v2) (m1 := m1) (m0 := m0) (m2 := m2); auto
     | [H_contra: Mem.storev ?m ?m_i ?v ?v0 = None,
         H1:  Mem.storev ?m0 ?m_i ?v1 ?v2 = Some ?m1,
-        H2: Mem.storev ?m ?m1 ?v ?v0 = Some ?m2 |- False] => apply Mem.store_validity_1 with (m1 := m)(m_i := m_i)(v1 := v)(v2 := v0)(m := m0)(v := v1)(v0 := v2)(m0 := m1)(m2 := m2); assumption.
+        H2: Mem.storev ?m ?m1 ?v ?v0 = Some ?m2 |- False] => apply Mem.store_validity_1 with (m1 := m)(m_i := m_i)(v1 := v)(v2 := v0)(m := m0)(v := v1)(v0 := v2)(m0 := m1)(m2 := m2); assumption
     (*break down memory operations involving reading from in flight mem*)
     (*this needs to be early as 3-tuples are just nested 2-tuples, so any tuple destruction will kill this*)
     | [H_rc:  forall (txid1 txid2 : mem_transaction_id) (v1 v2 v3 v4 : val)
-        (ifmo : in_flight_mem_ops) (c1 c2 : memory_chunk),
+       (c1 c2 : memory_chunk),
     txid1 <> txid2 ->
-    ifmo txid1 = Some (v1, v3, c1) ->
-    ifmo txid2 = Some (v2, v4, c2) -> ~ (memory_conflict c1 c2 v1 v2),
+    ?ifmo txid1 = Some (v1, v3, c1) ->
+    ?ifmo txid2 = Some (v2, v4, c2) -> ~ (memory_conflict c1 c2 v1 v2),
     H_ls: ?ifmo_i ?txid = Some (?v1, ?v5, ?m1),
     H_rs: ?ifmo_i ?txid0 = Some (?v2, ?v6, ?m2)
     |- (_, ?v1, ?m1) <> (_, ?v2, ?m2)] => apply mem_ne;  apply H_rc with (txid1 := txid)(txid2 := txid0)(v3 := v5) (v4 := v6)(ifmo:= ifmo_i); reorder_solver
@@ -2186,7 +2189,7 @@ Ltac disable_cmps :=
     end.
 
 Theorem reorder: forall g (f: function)(i1 i2: instruction) (ars_i: allregsets) (m_i: mem) (eaw_i: early_ack_writes) (ifmo_i: in_flight_mem_ops),
-     ~data_dependence i1 i2 g ars_i -> ~disabled_instrs i1 i2 -> input_code_race_free ->
+     ~data_dependence i1 i2 g ars_i -> ~disabled_instrs i1 i2 -> input_code_race_free ifmo_i ->
      output_data_eq ( eval_memsim_instr g f i2  (eval_memsim_instr g f i1 (MemSimNext ars_i m_i ifmo_i eaw_i))) (eval_memsim_instr g f i1  (eval_memsim_instr g f i2  (MemSimNext ars_i m_i ifmo_i eaw_i))).
 Proof. intros. 
 (* Definition unwrapping*)
